@@ -1,11 +1,23 @@
 # Wallet contract validation gate for every pull request to main (feature
-# 010-wallet-validator-ci). REQUIRED since 2026-08-26: org ruleset 21538893
-# ("openxFactory wallet-gate") requires this check on the default branch;
-# see the "Wallet validation gate" section in README.md.
+# 010-wallet-validator-ci, carried from openxFactory by the wallet-v1.0 carve).
+# REQUIRED on this repository's default branch by openXwallet's own ruleset,
+# created in EVALUATE mode and promoted to ACTIVE once the check had reported
+# once -- day-one REQUIRED is impossible, because GitHub cannot require a check
+# that has never reported. See docs/openxwallet-cutover-runbook.md.
+#
+# The job id is deliberately the SAME TOKEN as openxFactory's: the token names
+# the check's FUNCTION, and distinct repositories are distinct namespaces. A
+# different name would need its own runbook language and its own rename
+# successor.
 #
 # The job carries no display name on purpose: the status check must surface
 # as exactly `wallet-validation` (FR-007), the literal token the ruleset
 # pins; a distinct job display name silently de-advises the gate.
+#
+# THIS FILE IS THE ONE CARVED FILE THE SCAFFOLD EDITED, and the edit is the
+# verify step below. It is declared in docs/byte-identity-wallet-v1.0.md so it
+# is never mistaken for drift. The byte-identity floor covers the contract
+# BYTES, the two validators and the corpus -- not this workflow.
 name: wallet-validation
 
 on:
@@ -28,6 +40,14 @@ jobs:
           python-version: "3.12"
 
       - run: pip install pyyaml jsonschema rfc3339-validator
+
+      # FIRST, before anything reads the vendored schema. main() checks only
+      # ENVELOPE_SCHEMA_PATH.is_file() -- PRESENCE, not identity -- while rule
+      # (g) reads the approval-scope vocabulary out of that very file, so an
+      # unverified swap would silently redefine the vocabulary this gate
+      # enforces. Fails closed, and its refusal names its own remediation.
+      - name: Verify the vendored openxFactory artifact against contract_pin.yaml
+        run: python3 scripts/verify-contract-pin.py
 
       - run: python3 scripts/wallet-yaml-syntax-gate.py .
 

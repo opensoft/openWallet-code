@@ -1,0 +1,35 @@
+# The offline test suite for every pull request to main, over the syntax gate's
+# tests carried by the wallet-v1.0 carve (tests/wallet_yaml_syntax_gate/).
+#
+# The job carries no display name on purpose, for the same reason
+# wallet-validation.yml does: the status check must surface as exactly
+# `pytest-suite`, the literal token openXwallet's ruleset pins. A distinct job
+# display name silently de-advises the gate.
+#
+# `-q` keeps the log readable but the SUMMARY LINE is the evidence: a suite that
+# collected zero tests and a suite that passed are both "green" to a ruleset, so
+# the collected count is what distinguishes them.
+name: pytest-suite
+
+on:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  pytest-suite:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install pyyaml jsonschema rfc3339-validator pytest
+
+      - run: python3 -m pytest tests/ -q
