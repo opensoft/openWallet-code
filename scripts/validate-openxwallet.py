@@ -192,6 +192,7 @@ Exit codes: 0 ok, 1 findings, 2 harness error.
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import sys
 from datetime import datetime, timezone
@@ -1903,6 +1904,28 @@ def check_register(f: Findings, base_dir: Path, ctx: Context,
         f.error("register-row-malformed",
                 f"{reg_path}: `rows` must be a non-empty list")
         rows = []
+    # wallet-v1.1 (P2b, design D3): the durable positive line. Before this the
+    # reader was SILENT on success -- the only output naming the register was a
+    # failure finding, and the absent-register note above names no path at all,
+    # so "the register was read" could only be inferred from a conjunction of
+    # absences. Emitted HERE, at the earliest point where both reported facts
+    # are known, so it says "the register was read and its rows parsed" rather
+    # than "the register was clean": an auditor most needs to know WHICH
+    # register produced a row finding on exactly the runs that have one.
+    #
+    # A NOTE, never a warning: `report()` reds a `--strict` run on warnings and
+    # LedgerxFactory runs `--strict`, so promoting this line for visibility
+    # would red-line a required check in a repository that never asked for it.
+    #
+    # The path is RELATIVE to the scan root because the consumer gate's
+    # positive-proof test asserts on this line, and an absolute path differs
+    # between a developer's checkout and a runner's workspace.
+    try:
+        shown = reg_path.relative_to(Path(base_dir))
+    except ValueError:  # pragma: no cover - reg_path is built from base_dir
+        shown = reg_path
+    f.note(f"intake register read: {shown} ({len(rows)} row(s))")
+
     if len(rows) > REGISTER_MVP_SINGLE_ROW:
         f.error("register-minimal-shape-exceeded",
                 f"{reg_path}: {len(rows)} rows; the ratified first shape is "
@@ -2034,10 +2057,91 @@ def check_register(f: Findings, base_dir: Path, ctx: Context,
 
 # --------------------------- layer 2: real artifacts ---------------------------
 
+NESTED_REPO_MARKER = ".git"
+
+
+def sweep_candidates(target: Path) -> tuple[list[Path], list[Path]]:
+    """The sweep's YAML list, with NESTED REPOSITORIES pruned out of the walk.
+
+    wallet-v1.1 (P2b of the openxFactory change `split-openxwallet-repo`,
+    design D4). A consumer pins this validator and runs it over its OWN
+    checkout root -- it has to, because `check_register` joins the SCAN TARGET
+    with ("governance", "review-authority"), so any narrower target silently
+    disables the register read. That sweep then walks into every repository
+    nested below that root and adjudicates its carried YAML as LIVE RECORDS of
+    the consumer's tree: another product's OpenSpec instance, its Speckit
+    evidence, its test fixtures, its canonical registries.
+
+    `SKIP_DIR_NAMES` cannot close this. It is `set(path.parts) & SKIP_DIR_NAMES`
+    over the resulting paths, so it matches a path COMPONENT named `.git` -- and
+    a submodule checkout has no such component. Its `.git` is a FILE holding a
+    `gitdir:` line, and a file is not a directory name.
+
+    So the rule is: any directory below the scan root carrying a `.git` entry,
+    **file or directory**, is a nested repository and is not descended into.
+
+    WHY A GENERAL RULE and not `SKIP_DIR_NAMES | {"openXwallet"}`: hard-coding
+    one consumer's directory name into the product's validator is the exact
+    coupling that publishing openXwallet separately removes, and it would miss
+    every other nested repository -- including `installs/omnigent-install`,
+    which openxFactory's sweep walks into today. The hole is not wallet-shaped,
+    so the fix is not either.
+
+    WHY EXISTENCE and not the entry's TYPE: both shapes mean the same thing --
+    a different repository's history governs everything below here. A submodule
+    checkout and a `git worktree` carry a `.git` file; a nested clone carries a
+    `.git` directory. Distinguishing them would add a branch with no
+    behavioural difference. `Path.exists()` follows symlinks, so a `.git` link
+    that resolves prunes and one that dangles does not -- conservative either
+    way, because a prune only ever NARROWS what is adjudicated.
+
+    WHY THE SCAN ROOT IS EXEMPT: the ordinary case is a repository scanning
+    itself. `os.walk` is only ever asked about a directory's CHILDREN, so the
+    root is structurally never a prune candidate.
+
+    WHY `os.walk` REPLACED `rglob`: `Path.rglob` cannot be told to stop
+    descending, so a post-hoc filter would still walk the whole nested
+    repository and would then need an ancestor-chain test per file instead of
+    one existence test per directory. The result is sorted, so adjudication
+    order -- and therefore the order findings appear in -- is exactly what
+    `sorted(target.rglob("*.y*ml"))` produced. `os.walk` also yields FILES
+    only, where `rglob` would have yielded a directory whose own name matched
+    `*.y*ml`; nothing real has such a directory, and `load_yaml` would have
+    raised on it.
+
+    Returns (yaml files, pruned nested-repository directories), both sorted.
+    """
+    files: list[Path] = []
+    pruned: list[Path] = []
+    for dirpath, dirnames, filenames in os.walk(target):
+        here = Path(dirpath)
+        descend = []
+        for name in dirnames:
+            child = here / name
+            if (child / NESTED_REPO_MARKER).exists():
+                pruned.append(child)
+            else:
+                descend.append(name)
+        dirnames[:] = descend
+        files.extend(here / name for name in filenames
+                     if Path(name).match("*.y*ml"))
+    return sorted(files), sorted(pruned)
+
+
 def repo_scan(f: Findings, target: Path, docs: dict[str, dict],
               ctx: Context) -> None:
     sweep = target.is_dir()
-    files = sorted(target.rglob("*.y*ml")) if sweep else [target]
+    if sweep:
+        files, pruned = sweep_candidates(target)
+        if pruned:
+            # PATHS ONLY, relative to the scan root and sorted: a line a
+            # downstream gate can assert has to be identical on a laptop and on
+            # a CI runner. A NOTE, never a warning -- `report()` reds a
+            # `--strict` run on warnings and a live consumer runs `--strict`.
+            f.note("nested repositories pruned (not adjudicated): "
+                   + ", ".join(str(p.relative_to(target)) for p in pruned))
+    else:
+        files, pruned = [target], []
     scanned = skipped = 0
     found: list[tuple[Path, dict]] = []
     for path in files:
