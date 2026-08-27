@@ -432,17 +432,27 @@ def _baseline_script(tmp_path: Path) -> Path | None:
     directory whose sibling `contracts/` is a symlink to the real one, because
     the script derives `ROOT` from its own location.
     """
-    for ref in ("origin/main", "main", "HEAD^1", "HEAD"):
+    current = VALIDATOR.read_text(encoding="utf-8")
+    for ref in ("origin/main", "main", "HEAD^1", "HEAD^"):
         got = subprocess.run(
             ["git", "show", f"{ref}:scripts/validate-openxwallet.py"],
             capture_output=True, text=True, cwd=REPO_ROOT)
-        if got.returncode == 0 and got.stdout:
-            shadow = tmp_path / "baseline"
-            (shadow / "scripts").mkdir(parents=True)
-            dest = shadow / "scripts" / "validate-openxwallet.py"
-            dest.write_text(got.stdout, encoding="utf-8")
-            os.symlink(REPO_ROOT / "contracts", shadow / "contracts")
-            return dest
+        if got.returncode != 0 or not got.stdout:
+            continue
+        # NEVER fall back to a blob equal to the working copy. A candidate list
+        # ending at `HEAD` would compare this version against ITSELF wherever
+        # the base ref is unreachable -- a depth-1 CI checkout of a merge ref,
+        # say -- and pass vacuously. Vacuous passes are the exact failure class
+        # this wave refuses, so an identical blob is treated as no baseline at
+        # all and the test SKIPS with its reason.
+        if got.stdout == current:
+            continue
+        shadow = tmp_path / "baseline"
+        (shadow / "scripts").mkdir(parents=True)
+        dest = shadow / "scripts" / "validate-openxwallet.py"
+        dest.write_text(got.stdout, encoding="utf-8")
+        os.symlink(REPO_ROOT / "contracts", shadow / "contracts")
+        return dest
     return None
 
 
@@ -456,9 +466,9 @@ def test_the_previous_version_adjudicates_the_corpus_identically(tmp_path):
     """
     baseline = _baseline_script(tmp_path)
     if baseline is None:
-        pytest.skip("no git blob for a previous scripts/validate-openxwallet.py "
-                    "is reachable from this checkout, so there is nothing to "
-                    "compare against")
+        pytest.skip("no git blob for a DIFFERENT, previous "
+                    "scripts/validate-openxwallet.py is reachable from this "
+                    "checkout, so there is nothing to compare against")
 
     def findings(out: str) -> set[str]:
         return {ln for ln in out.splitlines()
