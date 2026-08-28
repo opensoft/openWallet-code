@@ -1,0 +1,46 @@
+# expected_failure: presenting-key-evidence-cap
+# expected_failure_detail: not a grant every one of its keys may exercise
+# requirement: OXW-R4
+# VIOLATES core R4: a grant exercised by a key whose custody cannot evidence
+# what that tier requires.
+#
+# Everything upstream is in order, which is the point. `grant-council-`
+# `unsupervised-0012` is an ADMISSIBLE grant: its audience wallet declares
+# `isolated_per_use_authorized`, whose ceiling is `act_unsupervised`, so rule
+# (e) admits it at issuance — and rule (e) is the only cap issuance can apply,
+# because issuance cannot know which of the wallet's keys will sign.
+#
+# Then seat A signs it. Seat A declares `holder_readable`: its signature
+# evidences that the ENVIRONMENT acted, ceiling `act`. `act_unsupervised` is the
+# tier where nothing stands between the holder and an irreversible external
+# effect, which is exactly the tier that requires evidence the HOLDER acted.
+#
+# So a grant a wallet may HOLD is not a grant every one of its keys may
+# EXERCISE, and without this cap the custody ladder is silently re-flattened by
+# whichever key happened to be reachable. Note what is NOT refused: a record
+# documenting this same event as `refused` with the exercise contract's own
+# `custody_ceiling_exceeded` code is the correct, valid record.
+schema_version: 1
+kind: xfactory_wallet_grant_exercise
+exercise_id: exr-council-over-ceiling-0011
+grant_ref: grant-council-unsupervised-0012
+act: publish_release
+object_ref: release:2026.8.28
+occurred_at: "2026-08-28T10:10:00Z"
+event_class: authenticated
+proof_of_possession:
+  presented: true
+  verified: true
+  signature_algorithm: ed25519
+  signed_over: request_digest
+  presenting_key_ref: key-council-seat-a-0011
+attribution:
+  mode: key_attributed
+  presenting_key_ref: key-council-seat-a-0011
+  wallet_ref: wal-agent-council-0011
+  holder_ref: agent:review-council-demo
+custody_model_in_force: holder_readable
+revocation_check:
+  performed_at_exercise: true
+  result: active
+outcome: permitted

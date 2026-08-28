@@ -1,0 +1,28 @@
+# VALID grant at the TOP tier to the same multi-key wallet. It is admissible
+# because that wallet declares `isolated_per_use_authorized`, whose ceiling is
+# `act_unsupervised` — rule (e) caps a grant by its AUDIENCE WALLET's custody,
+# the only cap issuance can apply, since issuance cannot know which of the
+# wallet's keys will sign.
+#
+# Which is exactly why there is a second cap at USE. This grant is holdable by
+# the wallet and NOT exercisable by its environment-evidencing keys; the refusal
+# is negative/exercise-tier-above-the-presenting-key-ceiling.yaml.
+schema_version: 1
+kind: xfactory_wallet_grant
+grant_id: grant-council-unsupervised-0012
+audience:
+  wallet_ref: wal-agent-council-0011
+  holder_ref: agent:review-council-demo
+scope:
+  acts:
+    - publish_release
+  authority_tier: act_unsupervised
+  approval_posture:
+    hermes_approval_required_before_apply: false
+    authority_agents_may_approve: false
+    human_escalation_required_for:
+      - irreversible_external_effect
+expires_at: "2026-12-31T23:59:59Z"
+issued_at: "2026-08-28T09:30:00Z"
+issued_by: opensoft
+state: active

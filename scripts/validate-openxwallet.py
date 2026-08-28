@@ -130,8 +130,15 @@ The rules the shapes cannot express:
 
   (r) AN EXERCISE BINDS TO ITS GRANT. The grant must resolve; the act must be
       one the grant confers; the presenting wallet must be the grant's
-      audience; and the custody recorded in force must be the custody that
-      wallet declares. The presenting wallet is DERIVED from the presenting
+      audience; the presenting key must be one of that wallet's DECLARED KEYS;
+      and the custody recorded in force must be the custody declared FOR THE
+      KEY THAT SIGNED, whose ceiling must also reach the grant's tier
+      (add-multi-key-wallets: a wallet may declare several keys as presenters
+      of its single authority, each with its own custody, so measuring every
+      exercise against whichever key is primary would say nothing about the
+      one that actually signed; and a grant a wallet may HOLD is not a grant
+      every one of its keys may EXERCISE). The presenting wallet is DERIVED
+      from the presenting
       key through the corpus's wallet records, never read from the record's
       own attribution block alone — a self-declared ref could be omitted
       (skipping the binding) or could name the audience while another
@@ -147,11 +154,20 @@ The rules the shapes cannot express:
       address, or claim evidence its own custody cannot supply — and every
       rule downstream then adjudicates a fiction (core R3, R5).
 
-  (s) A WALLET'S DECLARED CUSTODY IS IN THE CLOSED SET. Checking custody only
-      where an exercise reports a model in force left the DECLARATION
-      unchecked, so a wallet could name a model no registry contains and every
-      ceiling derived from it resolved to nothing — the cap failing open at the
-      one point it is supposed to bind (core R4).
+  (s) A WALLET'S DECLARED CUSTODY IS IN THE CLOSED SET, FOR EVERY KEY IT
+      DECLARES. Checking custody only where an exercise reports a model in
+      force left the DECLARATION unchecked, so a wallet could name a model no
+      registry contains and every ceiling derived from it resolved to nothing —
+      the cap failing open at the one point it is supposed to bind. The same
+      rule runs over each entry of the declared key SET, under the same code:
+      one defect, one name. Two refusals join it there, because a key PRESENTS
+      the wallet's single authority and is never a source of more of it — a
+      repeated key identifier is refused (`declared-key-duplicate`; index
+      tables are last-write-wins, so declaration order would otherwise pick
+      which custody an exercise resolves to) and a declared key whose ceiling
+      RANKS ABOVE the wallet's own is refused
+      (`declared-key-raises-authority`), which is what keeps keys from
+      multiplying authority (core R4).
 
   (t) THE ISSUER IS RECORDED AND ROOTS ARE ANCHORED. A REVIEW-class grant —
       membership decided by scope content alone: the canonical review act
@@ -463,6 +479,140 @@ def _hashable_set(values: Any) -> set:
     return {v for v in values if _hashable(v)}
 
 
+# ------------------- the declared key set (add-multi-key-wallets) -------------
+
+# base58btc, the alphabet `public_key_multibase`'s own pattern already pins
+# (`^z[1-9A-HJ-NP-Za-km-z]+$`): no 0, O, I or l, because those are the pairs a
+# human transcribes wrongly. Written out here rather than pulled from a
+# dependency — every gate in this repository is offline, and 20 lines of
+# integer arithmetic is a smaller liability than a wheel.
+_B58_ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
+_B58_INDEX = {c: i for i, c in enumerate(_B58_ALPHABET)}
+# The multicodec prefix `did:key` puts in front of a raw ed25519 public key.
+_ED25519_MULTICODEC = b"\xed\x01"
+
+
+def decode_public_key_multibase(value: Any) -> bytes | None:
+    """The 32 raw bytes inside a `z`-prefixed base58btc ed25519 public key.
+
+    None when the value is not that: wrong prefix, a character outside the
+    alphabet, a body that is not the ed25519 multicodec plus 32 bytes. The
+    caller reports; this only decides.
+
+    Why this exists: `key_fingerprint` is `"sha256:" + sha256(raw).hexdigest()`
+    — the one spelling the mint record, the review-authority register reader and
+    hermes-install all compute — and a fingerprint nothing recomputes is
+    decoration. Where an entry declares its public half, the fingerprint is
+    checked against it rather than trusted.
+    """
+    if not isinstance(value, str) or not value.startswith("z"):
+        return None
+    body = value[1:]
+    if not body:
+        return None
+    number = 0
+    for char in body:
+        position = _B58_INDEX.get(char)
+        if position is None:
+            return None
+        number = number * 58 + position
+    raw = number.to_bytes((number.bit_length() + 7) // 8, "big")
+    # base58btc encodes each leading zero byte as the alphabet's first
+    # character; integer arithmetic loses them, so they are restored by count.
+    leading = 0
+    for char in body:
+        if char == _B58_ALPHABET[0]:
+            leading += 1
+        else:
+            break
+    raw = b"\x00" * leading + raw
+    if not raw.startswith(_ED25519_MULTICODEC) or len(raw) != 34:
+        return None
+    return raw[2:]
+
+
+def fingerprint_of_public_key(raw: bytes) -> str:
+    """`key_fingerprint()`'s one spelling. Kept beside `_fingerprint_of`, which
+    computes the same value for the register reader's base64url encoding: two
+    encodings of a public half, one fingerprint spelling, and a single place
+    each decoding is turned into it."""
+    return "sha256:" + hashlib.sha256(raw).hexdigest()
+
+
+def declared_keys(doc: dict) -> list[tuple[str, dict, dict, str]]:
+    """The wallet's DECLARED KEY SET as
+    `(key_id, entry_mapping, custody_mapping, where)`.
+
+    The set is `key_reference` PLUS every entry of `keys:`, in declaration
+    order, with `key_reference` first. A record omitting `keys:` yields exactly
+    one member, which is why every rule keyed on this function computes what it
+    computed before sets were expressible (design D1).
+
+    `where` names the declaration site for a message. Duplicates are NOT
+    collapsed here: the duplicate refusal in `check_wallet_record` needs to see
+    them, and collapsing would hand a repeated identifier the silent
+    last-write-wins resolution the refusal exists to prevent.
+
+    Type-guarded throughout: this runs during repo indexing, BEFORE schema
+    validation, so a malformed document must reach its own schema finding
+    rather than crash a whole run.
+    """
+    out: list[tuple[str, dict, dict, str]] = []
+    key_ref = _mapping(doc.get("key_reference"))
+    primary = key_ref.get("key_id")
+    if isinstance(primary, str) and primary:
+        out.append((primary, key_ref, _mapping(doc.get("custody")),
+                    "key_reference"))
+    for position, entry in enumerate(_sequence(doc.get("keys"))):
+        entry = _mapping(entry)
+        key_id = entry.get("key_id")
+        if isinstance(key_id, str) and key_id:
+            out.append((key_id, entry, _mapping(entry.get("custody")),
+                        f"keys[{position}]"))
+    return out
+
+
+def declared_key_ids(doc: dict) -> list[str]:
+    """The declared key identifiers, deduplicated, in declaration order."""
+    seen: list[str] = []
+    for key_id, _entry, _custody, _where in declared_keys(doc):
+        if key_id not in seen:
+            seen.append(key_id)
+    return seen
+
+
+def declared_key_state(wallet: dict, key_id: str) -> str | None:
+    """The declared STATE of one key of a wallet, defaulting to `active`, or
+    None when the wallet does not declare that key.
+
+    `key_reference` has no state of its own: the primary key's standing IS the
+    wallet's `state`, which is where it has always lived and where the
+    revocation-propagation rule already reads it.
+    """
+    for candidate, entry, _custody, where in declared_keys(wallet):
+        if candidate != key_id:
+            continue
+        if where == "key_reference":
+            state = wallet.get("state")
+        else:
+            state = entry.get("state", "active")
+        return state if isinstance(state, str) else None
+    return None
+
+
+def custody_of_declared_key(wallet: dict, key_id: str) -> dict | None:
+    """The custody mapping declared FOR ONE KEY of a wallet, or None.
+
+    This is the basis rule (r) compares `custody_model_in_force` against: a
+    signature evidences only what the custody of THE KEY THAT SIGNED permits,
+    so the wallet's primary declaration is the right answer only when the
+    primary key is the one that signed (design D3).
+    """
+    for candidate, _entry, custody, _where in declared_keys(wallet):
+        if candidate == key_id:
+            return custody
+    return None
+
 
 # --------------------------- corpus context ---------------------------
 
@@ -509,9 +659,11 @@ class Context:
                 if wid in self.wallets:
                     self.duplicate_ids.add((kind, wid))
                 self.wallets[wid] = doc
-                key_ref = doc.get("key_reference")
-                key_id = key_ref.get("key_id") if isinstance(key_ref, dict) else None
-                if isinstance(key_id, str) and key_id:
+                # EVERY DECLARED KEY, not only the primary one
+                # (add-multi-key-wallets, design D4): rule (r) resolves a
+                # presenting key against the wallet's declared SET, and a set
+                # the index does not carry is a set the binding cannot see.
+                for key_id in declared_key_ids(doc):
                     holders = self.wallets_by_key.setdefault(key_id, [])
                     if wid not in holders:
                         holders.append(wid)
@@ -690,18 +842,132 @@ def check_custody_registry(f: Findings, label: str, doc: dict) -> None:
 
 def check_wallet_record(f: Findings, label: str, doc: dict, ctx: Context) -> None:
     """The custody model a wallet DECLARES is where the closed set actually
-    binds. Checking it only where an exercise reports a model in force left
-    the declaration itself unchecked, so a wallet could name a custody model
-    that does not exist and every ceiling computed from it would resolve to
-    nothing — the cap failing open at its source."""
-    model = _mapping(doc.get("custody")).get("model")
-    if model and (not isinstance(model, str) or model not in ctx.custody):
+    binds, and it now binds PER DECLARED KEY.
+
+    Checking it only where an exercise reports a model in force left the
+    declaration itself unchecked, so a wallet could name a custody model that
+    does not exist and every ceiling computed from it would resolve to nothing —
+    the cap failing open at its source. add-multi-key-wallets extends the same
+    rule to every key of the declared SET (design D2): the same defect one level
+    down, so it reports under the SAME code rather than acquiring a second name
+    for one failure.
+
+    Two refusals are new, and both exist because a KEY PRESENTS the wallet's
+    single authority and is never a source of more of it:
+
+      `declared-key-duplicate` — one identifier declared twice. Index tables are
+      last-write-wins, so declaration ORDER would otherwise decide which
+      custody an exercise resolves to. Refused at the record, where the defect
+      is, not at the exercise, where it is merely observable.
+
+      `declared-key-raises-authority` — a declared key whose custody ceiling
+      RANKS ABOVE the wallet's own. Without it the shape offers a route around
+      rule (e): declare a holder-evidencing key beside an environment-evidencing
+      wallet and the wallet's ceiling becomes an argument rather than a
+      computation. Keyed on RANK, like rule (c), so a registry that renamed a
+      tier cannot slip past it.
+    """
+    key_set = declared_keys(doc)
+    seen: dict[str, str] = {}
+    for key_id, _entry, _custody, where in key_set:
+        if key_id in seen:
+            f.error("declared-key-duplicate",
+                    f"{label}: declares key_id {key_id!r} more than once "
+                    f"({seen[key_id]} and {where}); a wallet's declared key "
+                    f"set is a SET, and a repeated identifier would let "
+                    f"declaration order decide which declaration — and so "
+                    f"which custody — an exercise resolves to")
+        else:
+            seen[key_id] = where
+
+    # THE WALLET'S OWN DECLARATION, checked exactly as it was before sets were
+    # expressible and independently of whether `key_reference.key_id` parses: a
+    # record with a malformed primary key reference must still have its custody
+    # declaration adjudicated, or the cap fails open on the malformed case.
+    wallet_model = _mapping(doc.get("custody")).get("model")
+    if wallet_model and (not isinstance(wallet_model, str)
+                         or wallet_model not in ctx.custody):
         f.error("custody-model-unknown",
-                f"{label}: declares custody model {model!r}, which is not a "
-                f"member of the closed registry "
+                f"{label}: declares custody model {wallet_model!r}, which is "
+                f"not a member of the closed registry "
                 f"({sorted(ctx.custody)}); custody is declared FROM A CLOSED "
                 f"SET, and an unrecognised model is refused rather than "
                 f"treated as uncapped")
+    wallet_member = (ctx.custody.get(wallet_model)
+                     if isinstance(wallet_model, str) else None)
+    wallet_ceiling_rank = (
+        ctx.rank(wallet_member.get("authority_ceiling"))
+        if isinstance(wallet_member, dict) else None)
+
+    for key_id, entry, custody, where in key_set:
+        if where == "key_reference":
+            continue
+        # THE FINGERPRINT RECOMPUTES where the entry declares its public half.
+        # `public_key_multibase` is optional, so this is conditional — but
+        # where it IS declared, a fingerprint that does not recompute is two
+        # claims about one key that cannot both be true, and the register
+        # reader beside this one already recomputes the same value from the
+        # same key's other encoding.
+        multibase = entry.get("public_key_multibase")
+        fingerprint = entry.get("key_fingerprint")
+        if multibase is not None and isinstance(fingerprint, str):
+            raw = decode_public_key_multibase(multibase)
+            if raw is None:
+                f.error("declared-key-fingerprint-mismatch",
+                        f"{label}: {where} declares public_key_multibase "
+                        f"{multibase!r} for key {key_id!r}, which does not "
+                        f"decode as base58btc carrying the ed25519 multicodec "
+                        f"prefix and 32 raw bytes; the fingerprint beside it "
+                        f"cannot be checked, and an unverifiable public half is "
+                        f"refused rather than passed over")
+            else:
+                recomputed = fingerprint_of_public_key(raw)
+                if recomputed != fingerprint:
+                    f.error("declared-key-fingerprint-mismatch",
+                            f"{label}: {where} declares key_fingerprint "
+                            f"{fingerprint!r} for key {key_id!r}, but its own "
+                            f"public_key_multibase recomputes to "
+                            f"{recomputed!r}; a fingerprint and the public half "
+                            f"beside it are two claims about ONE key and cannot "
+                            f"both be true")
+        model = custody.get("model")
+        if not model:
+            # An absent model is the schema's finding to report (`custody` is
+            # required on a `keys:` entry); reporting it again here would
+            # double-count one defect under a cross-shape code.
+            continue
+        member = ctx.custody.get(model) if isinstance(model, str) else None
+        if member is None:
+            f.error("custody-model-unknown",
+                    f"{label}: {where} declares custody model {model!r} for "
+                    f"key {key_id!r}, which is not a member of the closed "
+                    f"registry ({sorted(ctx.custody)}); custody is declared "
+                    f"FROM A CLOSED SET, and an unrecognised model is refused "
+                    f"rather than treated as uncapped")
+            continue
+        key_ceiling = member.get("authority_ceiling")
+        key_rank = ctx.rank(key_ceiling)
+        if (key_rank is not None and wallet_ceiling_rank is not None
+                and key_rank > wallet_ceiling_rank):
+            f.error("declared-key-raises-authority",
+                    f"{label}: {where} declares key {key_id!r} under custody "
+                    f"{model!r}, whose ceiling {key_ceiling!r} outranks the "
+                    f"wallet's own ceiling "
+                    f"{wallet_member.get('authority_ceiling')!r} (custody "
+                    f"{wallet_model!r}); a declared key PRESENTS this wallet's "
+                    f"authority and is never a source of more of it, so "
+                    f"raising authority stays a question about the wallet's "
+                    f"custody rather than about adding a stronger key beside "
+                    f"it")
+
+    # A NOTE (never a warning: `report()` reds a `--strict` run on warnings and
+    # a live consumer runs `--strict`). Emitted only for a wallet that actually
+    # declares a SET, so a consumer gate can assert POSITIVELY that the keys it
+    # expects were adjudicated rather than merely parsed — the same evidence
+    # discipline the register's per-seat note is written for.
+    if len(seen) > 1:
+        f.note(f"wallet {doc.get('wallet_id')!r}: {len(seen)} declared key(s) "
+               f"adjudicated ({', '.join(sorted(seen))})")
 
 
 # --------------------------- rules (e)-(h): grants ---------------------------
@@ -1013,8 +1279,8 @@ def check_exercise(f: Findings, label: str, doc: dict, ctx: Context) -> None:
             owners = ctx.wallets_by_key.get(presenting_key) or []
             if not owners:
                 f.error("presenting-key-unresolved",
-                        f"{label}: presenting key {presenting_key!r} is no "
-                        f"known wallet's key_reference, so the audience "
+                        f"{label}: presenting key {presenting_key!r} is in no "
+                        f"known wallet's DECLARED KEY SET, so the audience "
                         f"binding cannot be checked; an exercise presented by "
                         f"an unknown key is refused rather than passed over")
             elif len(owners) > 1:
@@ -1044,14 +1310,94 @@ def check_exercise(f: Findings, label: str, doc: dict, ctx: Context) -> None:
         wallet = (ctx.wallets.get(audience_wallet)
                   if isinstance(audience_wallet, str) else None)
         if wallet is not None:
-            declared_model = _mapping(wallet.get("custody")).get("model")
+            # THE BASIS IS THE PRESENTING KEY'S CUSTODY, not the wallet's
+            # primary declaration (add-multi-key-wallets, design D3). A
+            # signature evidences only what the custody of THE KEY THAT SIGNED
+            # permits, so a wallet declaring several keys under different
+            # custody would otherwise have every one of its exercises measured
+            # against whichever key happens to be primary. For a single-key
+            # record the two are the same object, so no existing verdict moves.
+            #
+            # When no presenting key was ESTABLISHED — an unattributed act, a
+            # verification failure, a key that resolved to no wallet or to more
+            # than one — the wallet's own declaration is the basis, exactly as
+            # before. An unestablished key is not an occasion to skip the check.
+            # ESTABLISHED means a VERIFIED proof named the key. The presenting
+            # key falls back to the record's own attribution block when the
+            # signature did not verify, and keying custody on THAT would
+            # measure an exercise against self-declared data — the laundering
+            # surface this rule exists to close. So an unverified exercise
+            # takes the wallet's declaration, exactly as it did before sets
+            # were expressible.
+            established_key = (presenting_key
+                               if verified is True
+                               and key_wallet == audience_wallet
+                               else None)
+            basis_custody = None
+            basis_where = f"wallet {audience_wallet!r}"
+            if established_key:
+                basis_custody = custody_of_declared_key(wallet, established_key)
+                if basis_custody is not None:
+                    basis_where = (f"presenting key {established_key!r} of "
+                                   f"wallet {audience_wallet!r}")
+            if basis_custody is None:
+                basis_custody = _mapping(wallet.get("custody"))
+            declared_model = basis_custody.get("model")
             in_force = doc.get("custody_model_in_force")
             if declared_model and in_force and in_force != declared_model:
                 f.error("custody-model-mismatch",
                         f"{label}: records custody {in_force!r} in force while "
-                        f"wallet {audience_wallet!r} declares {declared_model!r}; "
+                        f"{basis_where} declares {declared_model!r}; "
                         f"an exercise cannot claim evidence its wallet's custody "
                         f"does not supply")
+            # PER-KEY CUSTODY CAPS WHAT THAT KEY'S SIGNATURE EVIDENCES. Rule (e)
+            # caps a grant's tier by its AUDIENCE WALLET's ceiling at issuance,
+            # which is the only cap issuance can apply: it cannot know which of
+            # the wallet's keys will sign. This is the companion cap at USE. A
+            # wallet may hold a grant its weakest key must not exercise, and
+            # without this check that key exercises it anyway — the custody
+            # ladder silently re-flattened by whichever key was reachable.
+            key_member = (ctx.custody.get(declared_model)
+                          if isinstance(declared_model, str) else None)
+            key_ceiling = (key_member.get("authority_ceiling")
+                           if isinstance(key_member, dict) else None)
+            key_ceiling_rank = ctx.rank(key_ceiling)
+            grant_tier = _mapping(grant.get("scope")).get("authority_tier")
+            grant_tier_rank = ctx.rank(grant_tier)
+            # GUARDED ON `permitted`, like every other use-time cap. The
+            # exercise contract already closes a `custody_ceiling_exceeded`
+            # refusal code for exactly this event, so a record that TRUTHFULLY
+            # documents the refusal must not itself be a finding — otherwise
+            # the corpus cannot carry the honest case at all.
+            if (established_key and outcome == "permitted"
+                    and key_ceiling_rank is not None
+                    and grant_tier_rank is not None
+                    and grant_tier_rank > key_ceiling_rank):
+                f.error("presenting-key-evidence-cap",
+                        f"{label}: grant {doc.get('grant_ref')!r} confers tier "
+                        f"{grant_tier!r}, above the ceiling {key_ceiling!r} of "
+                        f"custody {declared_model!r} declared for presenting "
+                        f"key {established_key!r}; per-key custody caps what "
+                        f"THAT key's signature evidences, so a grant its "
+                        f"wallet may hold is not a grant every one of its keys "
+                        f"may exercise")
+            # A RETIRED KEY PRESENTS NOTHING, checked at USE. Reported under the
+            # existing revocation code rather than a new one: revoking a grant,
+            # suspending a wallet and retiring one of its keys are one rule —
+            # issuance-time validity is not evidence of current validity — and a
+            # second code for the third subject would be a second name for one
+            # rule. The wallet's own standing is untouched, which is the point:
+            # rotating one of four seat keys must not park the other three.
+            if established_key and outcome == "permitted":
+                key_state = declared_key_state(wallet, established_key)
+                if key_state in ("suspended", "revoked"):
+                    f.error("revoked-chain-exercised",
+                            f"{label}: exercise permitted under presenting key "
+                            f"{established_key!r}, whose declaration in wallet "
+                            f"{audience_wallet!r} records state {key_state!r}; "
+                            f"a retired key presents nothing, and the "
+                            f"retirement is checked at exercise rather than "
+                            f"trusted from issuance")
             if wallet.get("state") == "suspended" and outcome == "permitted":
                 f.error("revoked-chain-exercised",
                         f"{label}: exercise permitted while wallet "
@@ -1624,6 +1970,54 @@ def self_test(f: Findings, docs: dict[str, dict], ctx: Context) -> None:
                     f"negative/{name}: S2 branch probes MUST carry an "
                     f"expected_failure_detail pin naming their branch; an "
                     f"unpinned probe can be mutated into testing nothing")
+
+    # The multi-key fixtures are NAMED PROBES for the same reason the S2 ones
+    # are, and the reason is sharper here: every new invariant
+    # add-multi-key-wallets introduced attributes to an EXISTING requirement id
+    # (OXW-R1, R4, R5, R6), so the per-requirement closure below cannot notice
+    # one of these disappearing — the requirement still looks covered by the
+    # fixtures that were already there. Each name is pinned, and each pin is
+    # pinned, so a probe cannot be deleted or mutated into testing nothing.
+    for name, required_detail in (
+            ("wallet-declares-one-key-identifier-twice.yaml", True),
+            ("wallet-declared-key-omits-its-custody.yaml", True),
+            ("wallet-declared-key-outranks-its-wallet.yaml", True),
+            ("wallet-declared-key-fingerprint-does-not-recompute.yaml", True),
+            ("exercise-presenting-key-outside-the-declared-set.yaml", True),
+            ("exercise-tier-above-the-presenting-key-ceiling.yaml", True),
+            ("exercise-custody-of-another-key-of-the-same-wallet.yaml", True),
+            ("exercise-permitted-under-a-retired-declared-key.yaml", True),
+            ("exercise-single-key-custody-not-the-wallets.yaml", True)):
+        path = by_name.get(name)
+        if path is None:
+            f.error("examples-missing",
+                    f"multi-key named probe negative/{name} is absent from the "
+                    f"packaged corpus; each declared-key-set invariant keeps "
+                    f"its own standing fixture, because all of them attribute "
+                    f"to requirements that other fixtures already cover")
+            continue
+        _, detail, _ = expected_failure(path)
+        if required_detail and not detail:
+            f.error("negative-wrong-reason",
+                    f"negative/{name}: multi-key probes MUST carry an "
+                    f"expected_failure_detail pin naming their invariant; an "
+                    f"unpinned probe can be mutated into testing nothing")
+
+    # ID DISJOINTNESS, asserted rather than assumed. `key_id` is DID-scoped, so
+    # a fixture reusing a live-or-packaged identifier makes `wallets_by_key`
+    # two-owner and every exercise presenting that key is refused as AMBIGUOUS —
+    # which would turn several shipped positives red for a reason that has
+    # nothing to do with what they test. The multi-key fixtures widened the set
+    # of identifiers this corpus declares by a factor, so the collision surface
+    # is real and this is the check that keeps it closed.
+    for key_id, owners in sorted(ctx.wallets_by_key.items()):
+        if len(owners) > 1:
+            f.error("examples-invalid",
+                    f"packaged corpus: key_id {key_id!r} is declared by more "
+                    f"than one wallet ({sorted(owners)}); every packaged "
+                    f"wallet_id and declared key_id must be DISJOINT, or an "
+                    f"exercise presenting that key resolves to no single "
+                    f"wallet and the audience binding cannot run")
 
     # Coverage closure: a negative confirmation PER REQUIREMENT.
     for requirement, statement in REQUIREMENTS.items():

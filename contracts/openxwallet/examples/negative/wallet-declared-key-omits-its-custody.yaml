@@ -1,0 +1,33 @@
+# expected_failure: schema
+# expected_failure_detail: 'custody' is a required property
+# requirement: OXW-R4
+# VIOLATES core R4: a declared key with no custody declaration.
+#
+# Custody is what bounds what a signature EVIDENCES, so a declared key without
+# one is a key whose signature evidences nothing anybody wrote down — and every
+# ceiling computed from it resolves to nothing, which is the cap failing open at
+# the point it is supposed to bind. Required in the shape rather than checked by
+# a rule, because an absent declaration is not a disagreement to adjudicate; it
+# is a missing field.
+#
+# The detail pin matters here: without it this fixture would pass on ANY schema
+# finding, including a typo somewhere else in the file, and would stop testing
+# the invariant it is named for.
+schema_version: 1
+kind: xfactory_wallet_record
+wallet_id: wal-agent-no-key-custody-0014
+holder:
+  holder_id: agent:review-council-uncustodied
+  holder_class: agent
+key_reference:
+  did: "did:web:xforge.us:wallets:agent-uncustodied"
+  key_id: key-uncustodied-primary-0014
+  signature_algorithm: ed25519
+custody:
+  model: holder_readable
+  registry_version: 1
+keys:
+  - did: "did:web:xforge.us:wallets:agent-uncustodied:seat"
+    key_id: key-uncustodied-seat-0014
+    key_fingerprint: sha256:4e59e541063c1d80f9cc263451df4039acd51d7d5f192a7b91baaad57f5631a8
+state: active
