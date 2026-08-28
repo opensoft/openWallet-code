@@ -40,7 +40,11 @@ PRUNE_NOTE = re.compile(
 REGISTER_NOTE = re.compile(
     r"^note  intake register read: (\S+) \((\d+) row\(s\)\)$", re.M)
 ABSENT_REGISTER_NOTE = "note  no intake register at this tree; nothing to read"
-CORPUS_NOTE = ("note  corpus: 17 positive example(s), 36 negative "
+# wallet-v1.3 (`add-multi-key-wallets`) added four positives and nine negatives
+# for the declared key set. The count is LITERAL, not a wildcard, for the same
+# reason the register's seat-key count is: a corpus that silently lost a fixture
+# and a corpus that passed are both "green" to a pattern.
+CORPUS_NOTE = ("note  corpus: 21 positive example(s), 45 negative "
                "confirmation(s) across 13/13 requirements")
 
 # A minimal VALID wallet record, kept independent of the packaged corpus on
@@ -458,13 +462,46 @@ def _baseline_script(tmp_path: Path) -> Path | None:
         (shadow / "scripts").mkdir(parents=True)
         dest = shadow / "scripts" / "validate-openxwallet.py"
         dest.write_text(got.stdout, encoding="utf-8")
-        os.symlink(REPO_ROOT / "contracts", shadow / "contracts")
+        # THE BASELINE'S OWN CONTRACTS, not the working tree's. Recovered from
+        # the same ref as the script, because a release that adds corpus
+        # fixtures makes "the previous reader over the current corpus" a
+        # comparison of two different questions — see the test below, whose
+        # direction this enables.
+        archive = subprocess.run(
+            ["git", "archive", ref, "contracts"],
+            capture_output=True, cwd=REPO_ROOT)
+        if archive.returncode != 0:  # pragma: no cover
+            return None
+        subprocess.run(["tar", "-x", "-C", str(shadow)],
+                       input=archive.stdout, check=True)
+        # A SECOND root: the CURRENT reader over the BASELINE corpus. Both roots
+        # point at the same recovered contracts directory, so the only variable
+        # between the two runs is the reader.
+        current_over_baseline = tmp_path / "current-over-baseline"
+        (current_over_baseline / "scripts").mkdir(parents=True)
+        (current_over_baseline / "scripts" / "validate-openxwallet.py"
+         ).write_text(current, encoding="utf-8")
+        os.symlink(shadow / "contracts", current_over_baseline / "contracts")
         return dest
     return None
 
 
-def test_the_previous_version_adjudicates_the_corpus_identically(tmp_path):
-    """FR-009: the finding set does not move. Notes do, by design.
+def test_this_version_adjudicates_the_previous_corpus_identically(tmp_path):
+    """FR-009, in the only direction that stays meaningful. Notes move by design.
+
+    THE DIRECTION FLIPPED AT `wallet-v1.3`, and saying why matters more than the
+    assertion. Through `wallet-v1.2` every release changed the READER alone, so
+    "run the previous reader over this tree and diff the findings" was exactly
+    the no-regression claim. `wallet-v1.3` (`add-multi-key-wallets`) adds corpus
+    fixtures AND the rules they probe, so the previous reader cannot adjudicate
+    this tree at all — it would refuse the new multi-key positives for lacking
+    rules it does not have, which proves nothing about regression.
+
+    So the comparison is now: THIS reader over the PREVIOUS corpus, against the
+    PREVIOUS reader over the PREVIOUS corpus. That is the claim a consumer
+    actually depends on — "nothing you already declare changes verdict" — and it
+    is the claim `add-multi-key-wallets` made in prose ("existing single-key
+    records remain valid; the set has one member").
 
     Skipped LOUDLY, with a reason, when git history is unavailable (a tarball
     export, or a depth-1 CI checkout of a merge ref whose parents were never
@@ -476,16 +513,50 @@ def test_the_previous_version_adjudicates_the_corpus_identically(tmp_path):
         pytest.skip("no git blob for a DIFFERENT, previous "
                     "scripts/validate-openxwallet.py is reachable from this "
                     "checkout, so there is nothing to compare against")
+    current = (tmp_path / "current-over-baseline" / "scripts"
+               / "validate-openxwallet.py")
+
+    # HARNESS codes are excluded, and the exclusion is the point rather than a
+    # convenience. `examples-missing`, `examples-invalid` and `negative-*` are
+    # claims about the CORPUS's own completeness — "this release's named probes
+    # are present", "no packaged key id collides" — so they necessarily differ
+    # when a release adds fixtures, and the previous corpus lacking this
+    # release's probes is not a regression, it is the release. What must not
+    # move is the verdict on a RECORD, which is every other code.
+    HARNESS = ("examples-missing", "examples-invalid", "negative-should-fail",
+               "negative-wrong-reason", "negative-requirement-unknown",
+               "negative-requirement-uncovered")
 
     def findings(out: str) -> set[str]:
-        return {ln for ln in out.splitlines()
-                if ln.startswith(("ERROR [", "WARN  ["))}
+        # Labels are root-relative and the two roots differ, so the roots are
+        # normalised away. Codes and messages are the payload.
+        keep = set()
+        for line in out.splitlines():
+            if not line.startswith(("ERROR [", "WARN  [")):
+                continue
+            if any(f"[{code}]" in line for code in HARNESS):
+                continue
+            keep.add(line.replace(str(baseline.parent.parent), "<root>")
+                         .replace(str(current.parent.parent), "<root>"))
+        return keep
 
-    before = _run(REPO_ROOT, script=baseline)
-    after = _run(REPO_ROOT)
+    before = subprocess.run([sys.executable, str(baseline), "--strict"],
+                            capture_output=True, text=True)
+    after = subprocess.run([sys.executable, str(current), "--strict"],
+                           capture_output=True, text=True)
     if before.returncode == 2:  # pragma: no cover
         pytest.skip(f"the recovered baseline could not run: {before.stderr}")
 
     assert findings(before.stdout) == findings(after.stdout), (
-        f"finding set moved.\nBEFORE:\n{before.stdout}\nAFTER:\n{after.stdout}")
-    assert before.returncode == after.returncode == 0
+        f"finding set moved on the PREVIOUS corpus.\nBEFORE:\n{before.stdout}"
+        f"\nAFTER:\n{after.stdout}")
+    # And it is EMPTY, not merely equal: two identical non-empty sets would say
+    # the previous corpus was already failing, which is a different claim.
+    assert not findings(before.stdout), before.stdout
+    # The baseline exits clean over its own corpus. The current reader does NOT,
+    # and must not: over the previous corpus it reports this release's named
+    # probes as absent, which is the harness telling the truth. Asserting a
+    # clean exit here would either be false or would require deleting the probe
+    # check — so the exit code is asserted where it means something (the
+    # baseline) and the record-level verdict is what carries the comparison.
+    assert before.returncode == 0, before.stdout

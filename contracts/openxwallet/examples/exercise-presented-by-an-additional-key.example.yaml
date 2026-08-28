@@ -1,0 +1,37 @@
+# VALID exercise presented by a NON-PRIMARY declared key. Three things are
+# working here that could not be expressed before the key set existed:
+#
+#   the audience binding resolves the presenting key through the wallet's
+#   DECLARED SET rather than its primary key alone;
+#
+#   `custody_model_in_force` is the custody of THE KEY THAT SIGNED —
+#   `holder_readable`, seat A's own declaration — and not the wallet's
+#   `isolated_per_use_authorized`. An audit reader can therefore tell that the
+#   ENVIRONMENT was evidenced, which is the truth about this signature;
+#
+#   the grant's tier (`act`) is within that key's ceiling (`act`), so the
+#   per-key cap admits it.
+schema_version: 1
+kind: xfactory_wallet_grant_exercise
+exercise_id: exr-council-seat-a-0011
+grant_ref: grant-council-act-0011
+act: create_transaction
+object_ref: change-candidate:PR-0011
+occurred_at: "2026-08-28T10:00:00Z"
+event_class: authenticated
+proof_of_possession:
+  presented: true
+  verified: true
+  signature_algorithm: ed25519
+  signed_over: request_digest
+  presenting_key_ref: key-council-seat-a-0011
+attribution:
+  mode: key_attributed
+  presenting_key_ref: key-council-seat-a-0011
+  wallet_ref: wal-agent-council-0011
+  holder_ref: agent:review-council-demo
+custody_model_in_force: holder_readable
+revocation_check:
+  performed_at_exercise: true
+  result: active
+outcome: permitted

@@ -1,0 +1,80 @@
+# VALID wallet record declaring a KEY SET: one holder, one authority, several
+# keys that may present it (add-multi-key-wallets, ratified 2026-08-28). The
+# wallet is identified by the SET — `key_reference` plus every `keys:` entry —
+# and every key in it is a key THIS holder holds, which is why declaring several
+# is still not a record of someone else's key.
+#
+# MIXED CUSTODY IS THE POINT. The wallet declares
+# `isolated_per_use_authorized`, so its issuance ceiling is
+# `act_unsupervised`. Its additional keys declare WEAKER custody, and that is
+# legal and expected: a key may be weaker than its wallet, and what a weak key
+# may exercise is capped at USE rather than by refusing the declaration. The
+# reverse is refused — see negative/wallet-declared-key-outranks-its-wallet.yaml.
+#
+# The public halves here are FIXTURE VALUES derived deterministically from this
+# file's own labels. They are 32-byte strings in `did:key`'s encoding so the
+# fingerprint check has something real to recompute; nobody holds a private
+# half for any of them, and no live surface references them.
+schema_version: 1
+kind: xfactory_wallet_record
+wallet_id: wal-agent-council-0011
+holder:
+  holder_id: agent:review-council-demo
+  holder_class: agent
+  display_label: Review council (body) — packaged fixture
+key_reference:
+  did: "did:web:xforge.us:wallets:agent-council-demo"
+  key_id: key-council-primary-0011
+  signature_algorithm: ed25519
+custody:
+  model: isolated_per_use_authorized
+  registry_version: 1
+  declared_at: "2026-08-28T09:00:00Z"
+  declared_by: opensoft
+keys:
+  # A seat key with its public half declared, so its fingerprint RECOMPUTES.
+  - did: "did:key:z6MkesFwon9Uucr7UuwNmnHg2ci5tXfk5yaJ1jVV33jBaXrd"
+    key_id: key-council-seat-a-0011
+    key_fingerprint: sha256:6ada99966134615c07adb84cb71a87876c087795552f5eb01436a86fb2464c11
+    public_key_multibase: z6MkesFwon9Uucr7UuwNmnHg2ci5tXfk5yaJ1jVV33jBaXrd
+    signature_algorithm: ed25519
+    display_label: seat A signing key (environment-resident)
+    custody:
+      model: holder_readable
+      registry_version: 1
+      declared_at: "2026-08-28T09:00:00Z"
+      declared_by: opensoft
+  # A seat key with NO public half declared. The fingerprint check is
+  # conditional on `public_key_multibase`, so this entry's fingerprint is a
+  # claim whose proof lives wherever the key does — honest rather than checked,
+  # and the difference is deliberate.
+  - did: "did:web:xforge.us:wallets:agent-council-demo:seat-b"
+    key_id: key-council-seat-b-0011
+    key_fingerprint: sha256:4e59e541063c1d80f9cc263451df4039acd51d7d5f192a7b91baaad57f5631a8
+    signature_algorithm: ed25519
+    display_label: seat B signing key (isolated, invocable without limit)
+    custody:
+      model: isolated_invocable
+      registry_version: 1
+      declared_at: "2026-08-28T09:00:00Z"
+      declared_by: opensoft
+  # A RETIRED key, still declared. Deleting it would retroactively invalidate
+  # every already-recorded exercise that named it, so retirement is a state
+  # change and the declaration is append-only. An exercise PERMITTED under this
+  # key is refused at use — see
+  # negative/exercise-permitted-under-a-retired-declared-key.yaml.
+  - did: "did:key:z6Mkm26nLNAaByRTLA6yhnkr7zYyVtooYoA4xychMfU17uph"
+    key_id: key-council-retired-0011
+    key_fingerprint: sha256:bf80c7c0e8e442f1c767143f196d181933c8d7e9114754cea974e5877aec8cc1
+    public_key_multibase: z6Mkm26nLNAaByRTLA6yhnkr7zYyVtooYoA4xychMfU17uph
+    signature_algorithm: ed25519
+    state: revoked
+    display_label: rotated-out seat key, retained so its acts stay readable
+    custody:
+      model: holder_readable
+      registry_version: 1
+      declared_at: "2026-08-28T09:00:00Z"
+      declared_by: opensoft
+state: active
+created_at: "2026-08-28T09:00:00Z"
+policy_version: 1

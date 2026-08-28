@@ -1,0 +1,38 @@
+# expected_failure: presenting-key-unresolved
+# expected_failure_detail: an exercise presented by an unknown key
+# requirement: OXW-R5
+# VIOLATES core R5: a presenting key that is not in the audience wallet's
+# DECLARED KEY SET.
+#
+# The distinction this fixture exists for: `key-council-seat-c-0011` is shaped
+# exactly like a member of wal-agent-council-0011's set, sits beside three keys
+# that ARE members, and is declared by nothing. A wallet declaring several keys
+# makes "looks like one of its keys" cheap, so the boundary of the SET is what
+# has to be checked — not merely that the key is unfamiliar.
+#
+# Fail-closed, like every other binding in this rule: what cannot be checked is
+# refused, not skipped.
+schema_version: 1
+kind: xfactory_wallet_grant_exercise
+exercise_id: exr-council-outside-set-0011
+grant_ref: grant-council-act-0011
+act: create_transaction
+object_ref: change-candidate:PR-0011
+occurred_at: "2026-08-28T10:05:00Z"
+event_class: authenticated
+proof_of_possession:
+  presented: true
+  verified: true
+  signature_algorithm: ed25519
+  signed_over: request_digest
+  presenting_key_ref: key-council-seat-c-0011
+attribution:
+  mode: key_attributed
+  presenting_key_ref: key-council-seat-c-0011
+  wallet_ref: wal-agent-council-0011
+  holder_ref: agent:review-council-demo
+custody_model_in_force: holder_readable
+revocation_check:
+  performed_at_exercise: true
+  result: active
+outcome: permitted

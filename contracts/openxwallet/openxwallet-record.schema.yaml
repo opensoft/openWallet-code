@@ -4,14 +4,36 @@ name: xfactory_wallet_record
 $schema: "https://json-schema.org/draft/2020-12/schema"
 $id: "https://xforge.us/schemas/openxfactory/openxwallet/v1/openxwallet-record.schema.yaml"
 contract_id: openxwallet-record
-contract_schema_version: 1
+contract_schema_version: 2
 title: openxWallet wallet record
 description: >-
   The neutral wallet record (add-openxwallet, capability `openxwallet`,
   requirement "A wallet is a key, never a record of a key"). A wallet is a
-  signing key anchored to a decentralized identifier and held by a HOLDER;
-  the record carries the holder's identifier, a REFERENCE to the key, and the
-  key's declared custody model.
+  signing key — or a declared SET of signing keys — anchored to decentralized
+  identifiers and held by a HOLDER; the record carries the holder's identifier,
+  a REFERENCE to each key it declares, and each declared key's own custody
+  model.
+
+  THE DECLARED KEY SET is `key_reference` plus every entry of `keys:`
+  (add-multi-key-wallets, ratified 2026-08-28). `keys:` is OPTIONAL and
+  declares ADDITIONAL keys; a record that omits it declares exactly ONE key and
+  is conformant unchanged — the set is a set of one and every rule keyed on it
+  computes what it computed before sets were expressible. The wallet is
+  identified by that SET, and every key in it is a key the HOLDER holds, so a
+  wallet declaring several keys is still never a record of SOMEONE ELSE'S key.
+  Keys are PRESENTERS of the wallet's single authority and never sources of
+  more of it: grants stay wallet-level, and the canonical validator refuses a
+  declared key whose custody ceiling outranks the wallet's own.
+
+  ONE FIELD DOES TWO JOBS, and saying so is better than leaving a reader to
+  discover it. The top-level `custody` block below is SIMULTANEOUSLY this
+  wallet's issuance ceiling — what a grant addressed to it may confer — and the
+  PER-KEY custody of the primary key, `key_reference`, which carries no custody
+  block of its own. So a wallet cannot weaken or retire its primary key without
+  lowering its own grant ceiling, and the refusal above compares each `keys:`
+  entry against a value that is definitionally the primary key's. An
+  independent `custody` on `key_reference` is additive and is a named successor;
+  nothing in the estate needs the divergence yet.
 
   THE RECORD HAS NO PROPERTY THAT COULD HOLD KEY MATERIAL, at any depth, with
   `additionalProperties: false` everywhere so a consumer cannot add one. This
@@ -65,10 +87,18 @@ properties:
         enum: [person, practitioner, organisation, agent]
       display_label: {type: string, maxLength: 200}
   key_reference:
-    # A REFERENCE. `did` anchors the key to a decentralized identifier;
-    # `key_id` names the key within that anchor. `public_key_multibase` is
-    # admitted because a public key is not key material — it is what a
-    # verifier needs and what proof of possession is checked against.
+    # The PRIMARY declared key, and a REFERENCE. `did` anchors the key to a
+    # decentralized identifier; `key_id` names the key within that anchor.
+    # `public_key_multibase` is admitted because a public key is not key
+    # material — it is what a verifier needs and what proof of possession is
+    # checked against.
+    #
+    # `key_fingerprint` is OPTIONAL HERE and REQUIRED on every `keys:` entry.
+    # The asymmetry is deliberate rather than an oversight: this declaration
+    # PREDATES the field, and requiring it here would invalidate every wallet
+    # record in the estate — a contract that breaks its consumers to gain a
+    # field is not additive. Recording it is encouraged; the day every live
+    # record carries one, requiring it is a MAJOR with a migration note.
     type: object
     required: [did, key_id]
     additionalProperties: false
@@ -77,6 +107,7 @@ properties:
         type: string
         pattern: '^did:[a-z0-9]+:[A-Za-z0-9._:%-]+$'
       key_id: {$ref: '#/$defs/identifier'}
+      key_fingerprint: {$ref: '#/$defs/key_fingerprint'}
       public_key_multibase:
         type: string
         pattern: '^z[1-9A-HJ-NP-Za-km-z]+$'
@@ -109,6 +140,82 @@ properties:
       registry_version: {type: integer, minimum: 1}
       declared_at: {type: string, format: date-time}
       declared_by: {$ref: '#/$defs/identifier'}
+  keys:
+    # ADDITIONAL declared keys, beside `key_reference` and never instead of it
+    # (add-multi-key-wallets, design D1). The declared key SET is
+    # `key_reference` plus these; omitting this property declares one key.
+    #
+    # EVERY entry carries its OWN custody declaration and its OWN fingerprint,
+    # which is the whole of what makes several keys safe to declare: a
+    # signature evidences only what the custody of THE KEY THAT SIGNED permits,
+    # so a set whose members shared one declaration would say less than a
+    # single key does. `custody` is required for that reason — a declared key
+    # with no custody declaration is a key whose signature evidences nothing
+    # anybody wrote down.
+    #
+    # An entry repeating `key_reference.key_id`, or another entry's `key_id`,
+    # is a DUPLICATE and is refused: index tables are last-write-wins, so a
+    # repeated identifier would let declaration ORDER decide which custody an
+    # exercise resolves to.
+    #
+    # No property here could hold key material either — `additionalProperties:
+    # false` at every depth, and the same value scan applies.
+    type: array
+    minItems: 1
+    items:
+      type: object
+      required: [did, key_id, key_fingerprint, custody]
+      additionalProperties: false
+      properties:
+        did:
+          # REQUIRED, matching `key_reference`. A key with no anchor has
+          # nothing for `key_id` to be scoped BY, and `key_id` being
+          # DID-scoped is what makes a bare key reference declared by two
+          # wallets ambiguous-and-refused rather than resolved by file order.
+          # For an ed25519 key the anchor is derived rather than invented:
+          # `did:key:<multibase>` comes from the public half itself, which is
+          # why the estate's live wallet carries the same string in `did` and
+          # in `public_key_multibase`.
+          type: string
+          pattern: '^did:[a-z0-9]+:[A-Za-z0-9._:%-]+$'
+        key_id: {$ref: '#/$defs/identifier'}
+        key_fingerprint: {$ref: '#/$defs/key_fingerprint'}
+        custody: {$ref: '#/$defs/custody_declaration'}
+        state:
+          # A DECLARATION IS APPEND-ONLY; retirement is a state change, never a
+          # deletion. Deleting a retired key's declaration would retroactively
+          # invalidate every already-recorded exercise that named it — the
+          # canonical validator re-adjudicates every family-kind file in a
+          # scanned tree on every run, so a rotation would rewrite the verdict
+          # on committed history. A single-key wallet never meets this (you
+          # revoke the WALLET and never delete its `key_reference`); several
+          # keys make rotation the ordinary operation, so the ordinary
+          # operation gets a shape.
+          #
+          # Absent means `active`. An exercise PERMITTED under a key whose
+          # state is `suspended` or `revoked` is refused by the canonical
+          # validator under the same rule as a revoked grant or a suspended
+          # wallet: revocation is checked at USE.
+          type: string
+          enum: [active, suspended, revoked]
+        public_key_multibase:
+          # OPTIONAL, and load-bearing where present: the canonical validator
+          # RECOMPUTES `key_fingerprint` from it. `did:key`'s own encoding —
+          # `z` plus base58btc of the two-byte ed25519 multicodec prefix and
+          # the 32 raw bytes — so `sha256(raw)` over the decoded body is
+          # exactly the fingerprint spelling every other surface computes. An
+          # entry declaring no public half declares a fingerprint whose proof
+          # lives wherever the key does, which is honest rather than checked.
+          type: string
+          pattern: '^z[1-9A-HJ-NP-Za-km-z]+$'
+        signature_algorithm:
+          # The same closed set `key_reference` draws from, for the same
+          # measured reason. Restating the enum rather than sharing a $def
+          # keeps the widening history readable at its original site.
+          type: string
+          enum: [ed25519, ecdsa-p256, ecdsa-secp256k1,
+                 rsa-2048-sha256, rsa-3072-sha256]
+        display_label: {type: string, maxLength: 200}
   state:
     # `revoked` revokes every grant this wallet holds, through the core's
     # revocation-propagation rule, without waiting for expiry.
@@ -122,3 +229,36 @@ $defs:
     minLength: 1
     maxLength: 200
     pattern: '^[A-Za-z0-9][A-Za-z0-9._:/-]*$'
+  key_fingerprint:
+    # ONE SPELLING, shared by the mint record that produces a key, the
+    # review-authority register reader that recomputes it from the public half,
+    # and hermes-install's runtime: "sha256:" + sha256(raw public key).hexdigest().
+    # Lowercase hex is pinned because two spellings of one fingerprint are two
+    # keys to anything comparing strings.
+    #
+    # THE VALUE IS NOT RECOMPUTED HERE and cannot be: a `keys:` entry carries no
+    # raw public half to recompute it from (design D5). This is the JOIN TOKEN
+    # by which a key declared in a wallet record and the same key recorded on
+    # another governed surface can be shown to be the same key; the surface
+    # holding the public half is the one that proves the value.
+    type: string
+    pattern: '^sha256:[0-9a-f]{64}$'
+  custody_declaration:
+    # The per-key custody declaration, resolved against the SAME closed
+    # registry (openxwallet-custody.registry.yaml) as the wallet's own, and
+    # deliberately the same shape as the top-level `custody` block: one
+    # vocabulary, so a key's declaration and a wallet's can never disagree by
+    # restatement.
+    #
+    # The registry states what each model EVIDENCES and the authority it CAPS.
+    # A declared key may be WEAKER than its wallet and often should be; it may
+    # never be STRONGER, because a key presents the wallet's authority and is
+    # never a source of more of it.
+    type: object
+    required: [model, registry_version]
+    additionalProperties: false
+    properties:
+      model: {$ref: '#/$defs/identifier'}
+      registry_version: {type: integer, minimum: 1}
+      declared_at: {type: string, format: date-time}
+      declared_by: {$ref: '#/$defs/identifier'}

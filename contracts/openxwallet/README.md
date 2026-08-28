@@ -12,9 +12,14 @@ The neutral contract for **what a wallet is, what authority it can carry, and
 what a signature under it actually proves** — holder-class agnostic, and
 optional for every domain.
 
-A wallet is a signing key anchored to a decentralized identifier and held by a
-HOLDER, where a holder is any subject class the family recognises: a person, a
-practitioner, an organisation, or an agent. Everything agent-specific lives in
+A wallet is a signing key — or a declared SET of signing keys — anchored to
+decentralized identifiers and held by a HOLDER, where a holder is any subject
+class the family recognises: a person, a practitioner, an organisation, or an
+agent. A wallet declaring several keys (`wallet-v1.3`,
+`add-multi-key-wallets`) has ONE authority presented by several keys, each
+carrying its own custody declaration, fingerprint and state; grants stay
+wallet-level, so keys never multiply authority. A record declaring one key is a
+set of one and is conformant unchanged. Everything agent-specific lives in
 the sibling family
 [`contracts/openxwallet-agent-profile/`](../openxwallet-agent-profile/README.md),
 which is a NEW capability over this core rather than a modification of it.
@@ -101,7 +106,7 @@ credentials.
 
 | Kind | Purpose |
 |---|---|
-| `xfactory_wallet_record` | A holder, a key REFERENCE, a declared custody model. Never key material. |
+| `xfactory_wallet_record` | A holder, a key REFERENCE — or a declared SET of them — and each declared key's custody model. Never key material. |
 | `xfactory_wallet_custody_registry` | The closed custody set, what each member evidences, and the ordered authority ladder it caps. |
 | `xfactory_wallet_grant` | Audience, scope, expiry, optional parent. Derivation narrows monotonically. |
 | `xfactory_wallet_grant_exercise` | Proof of possession, key attribution, revocation checked at use, distinct-holder evaluation. |
