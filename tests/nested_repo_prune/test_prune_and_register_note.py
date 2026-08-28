@@ -312,8 +312,15 @@ def _register_tree(root: Path, rows: list[dict] | None = None) -> Path:
 
     ra = root / "governance" / "review-authority"
     (ra / "attestations").mkdir(parents=True)
+    # wallet-v1.2 (`add-per-seat-register-entries`): the top level is a CLOSED
+    # read set and `revocation_staleness_bound` is REQUIRED, so this fixture
+    # declares one. wallet-v1.1's two behaviours are unchanged by that — which is
+    # what these tests still assert — but a register without the bound is no
+    # longer a readable register, and a fixture that pretended otherwise would be
+    # testing a shape no consumer can commit.
     (ra / "register.yaml").write_text(
         yaml.safe_dump({"register_version": 1,
+                        "revocation_staleness_bound": "P7D",
                         "rows": rows if rows is not None else [REGISTER_ROW]}),
         encoding="utf-8")
     (ra / "attestations" / "custody-attest.yaml").write_text(
