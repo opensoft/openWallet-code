@@ -2165,6 +2165,43 @@ def self_test(f: Findings, docs: dict[str, dict], ctx: Context) -> None:
                     _s4_ctx(s4_grant, s4_wallet),
                     {"register-row-malformed", "register-no-active-row"})
 
+    # wallet-v1.4: A REVOKED REVIEW-CLASS GRANT OWES NO ROW. This is the
+    # RE-ISSUANCE shape and nothing else: the predecessor was revoked, the
+    # successor issued against it, and the one permitted row repointed. Before
+    # wallet-v1.4 the closing loop read only `scope.acts` and demanded a
+    # backing active row for the revoked predecessor too -- a row the
+    # single-row cap forbids -- so no consumer could represent a re-issuance
+    # at all. Three probes, because the fix has three halves: the shape is
+    # CLEAN, the guard still fires on an ACTIVE grant with no row (the probe
+    # above), and a row pointing AT a revoked grant is still refused.
+    s4_revoked = dict(
+        s4_grant, grant_id="grant-s4-probe-0000", state="revoked",
+        revocation={"revoked_at": "2026-08-30T12:00:00Z",
+                    "reason": "superseded by grant-s4-probe-0001 for drift; "
+                              "the register act's shape"})
+    base, c = _s4_tree([s4_row])
+    c.index(s4_revoked)
+    _register_probe("self-test/register-revoked-grant-exempt", base, c, set())
+
+    # PROTECTION PRESERVED, the row->grant direction: a row that still points
+    # at the revoked grant is refused. The exemption is only ever about a
+    # revoked grant NO row names.
+    base, c = _s4_tree([dict(s4_row, grant_ref="grant-s4-probe-0000")],
+                       grant=s4_revoked)
+    _register_probe("self-test/register-revoked-grant-still-mismatches",
+                    base, c, {"register-grant-mismatch"})
+
+    # The SAME exemption on the absent-register branch, which states the same
+    # obligation for a tree that never cold-started: revoked-only is clean.
+    probe = Findings()
+    check_register(probe, Path(tempfile.mkdtemp(prefix="s4-selftest-")),
+                   _s4_ctx(s4_revoked, s4_wallet), now=now)
+    if probe.errors:
+        f.error("register-assertion-failed",
+                f"self-test/register-revoked-grant-absent-register: an absent "
+                f"register with only REVOKED review-class grants must be "
+                f"clean; got {probe.errors}")
+
     # act tier without a parseable attestation refuses loudly.
     base, c = _s4_tree([s4_row], with_attest=False)
     _register_probe("self-test/register-tier-act-unattested", base, c,
@@ -2805,8 +2842,10 @@ def _check_seat_keys(f: Findings, reg: dict, reg_path: Path,
 def check_register(f: Findings, base_dir: Path, ctx: Context,
                    now: datetime | None = None) -> None:
     """The register reader. MVP obligations exactly as ratified: every active
-    review-class grant in the scanned tree needs a backing ACTIVE row; every
-    row resolves end to end (wallet, grant, computed expiry, act-tier
+    review-class grant in the scanned tree needs a backing ACTIVE row -- and
+    "active" is READ, not assumed: a grant stamped `revoked` is terminal and
+    owes no row (wallet-v1.4; see REVOKED IS EXEMPT at the closing loop);
+    every row resolves end to end (wallet, grant, computed expiry, act-tier
     attestation); the stored `state` field is checked AGAINST computed time,
     never trusted (N8). Absent register + no review-class grants is the
     legitimate posture of every consumer repository that has not cold-started
@@ -2814,10 +2853,18 @@ def check_register(f: Findings, base_dir: Path, ctx: Context,
     now = now or datetime.now(timezone.utc)
     reg_path = Path(base_dir).joinpath(*REGISTER_DIR_PARTS, REGISTER_FILE)
     if not reg_path.exists():
+        # wallet-v1.4: `state == "revoked"` is exempt here for exactly the
+        # reasons spelled out at the closing loop's REVOKED IS EXEMPT block --
+        # this branch states the SAME obligation for the absent-register case,
+        # and the two must agree or a consumer's finding would depend on
+        # whether it has cold-started the register yet. A tree carrying only
+        # revoked review-class grants and no register is the shape a consumer
+        # has after revoking its way out of the arc, and it is legitimate.
         review_holders = [
             gid for gid, g in ctx.grants.items()
             if isinstance(g.get("scope"), dict)
             and REVIEW_ACT_TOKEN in _hashable_set(g["scope"].get("acts"))
+            and g.get("state") != "revoked"
         ]
         if review_holders:
             f.error("register-no-active-row",
@@ -3006,10 +3053,42 @@ def check_register(f: Findings, base_dir: Path, ctx: Context,
     # The headline obligation, inverted for CI: an active REVIEW-class grant
     # whose holder carries no ACTIVE register row means a convening could
     # admit authority the register never granted.
+    #
+    # REVOKED IS EXEMPT (wallet-v1.4). Until this release the loop filtered on
+    # the review token ALONE and never read the grant's own `state`, so it
+    # demanded a backing active row for a grant it had itself been told was
+    # revoked -- while `REGISTER_MVP_SINGLE_ROW` (above) forbids the second row
+    # such a demand would need. The reader could therefore not represent ANY
+    # re-issuance: revoking a review-class grant and issuing its successor is
+    # the runbook's §5.1 act, and every consumer that performed it went red on
+    # a correct tree. openxFactory's S5 register act (2026-09-02, PR #583) is
+    # the act that found it.
+    #
+    # WHY `== "revoked"` AND NOT `!= "active"`. The broader test would also
+    # exempt a grant merely STAMPED `expired`, and this reader has no inverse
+    # check for stored-expired-with-a-future `expires_at` -- N8 is that stored
+    # state is checked AGAINST computed time and never trusted, so a state the
+    # reader cannot contradict must not be allowed to switch an obligation off.
+    # `revoked` is different in kind: it is the TERMINAL fact of the ratified
+    # drift-cascade rule (a revoked grant never returns to active; authority
+    # resumes only as a NEW grant), it is the exact state §5.1 re-issuance
+    # produces, and it is backstopped -- `revocation-unrecorded` refuses a
+    # grant stamped `revoked` that carries no `revocation` block recording when
+    # and why.
+    #
+    # NEITHER VARIANT WEAKENS THE GUARD, because this loop is only the
+    # grant->row direction. The row->grant direction still runs above and
+    # appends `grant state ...` to `mismatches`, so a row pointing at a revoked
+    # grant is still refused with `register-grant-mismatch`; and
+    # `_revoked_ancestor` still refuses every exercise up a revoked chain. What
+    # is exempted here is exactly a revoked grant that NO row points at -- a
+    # historical record, which is what a superseded grant is supposed to be.
     for gid, g in sorted(ctx.grants.items()):
         scope = g.get("scope") if isinstance(g.get("scope"), dict) else {}
         if REVIEW_ACT_TOKEN not in _hashable_set(scope.get("acts")):
             continue
+        if g.get("state") == "revoked":
+            continue  # wallet-v1.4 -- see REVOKED IS EXEMPT below
         backed = any(
             isinstance(r, dict) and r.get("grant_ref") == gid
             and r.get("state") == "active"
