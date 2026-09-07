@@ -202,12 +202,14 @@ The rules the shapes cannot express:
       out of the register in the first place.
       PER-SEAT SIGNING KEYS are recorded beside the rows and ENFORCED: each
       entry's field set is exact, its fingerprint RECOMPUTES from its own
-      public key, its seat/key/fingerprint are unique, its authorizing row
-      resolves ACTIVE and unexpired by computed time, and its council is the
-      holder that row commissions. The single-row cap binds AUTHORITY ROWS —
-      one holder, one target, one act — and the key surface is bounded
-      structurally instead, by every entry descending from a row in this same
-      file (review-authority-register-reader).
+      public key, the pair (council_id, seat_id) is unique while key_id and
+      key_fingerprint are unique GLOBALLY, its authorizing row resolves ACTIVE
+      and unexpired by computed time, and its council is the holder that row
+      commissions. NEITHER SURFACE IS BOUNDED BY A COUNT (wallet-v1.5): the
+      register carries one AUTHORITY ROW per commissioned body and the reader
+      bounds its breadth by three invariants instead — every row resolves end
+      to end, every seat entry attaches to a row that commissions its body, and
+      the seat pair is unique (review-authority-register-reader).
 
 WHAT THIS VALIDATOR DELIBERATELY DOES NOT DO
 
@@ -2090,7 +2092,7 @@ def self_test(f: Findings, docs: dict[str, dict], ctx: Context) -> None:
     }
 
     def _s4_tree(register_rows, with_attest=True, grant=None, wallet=None,
-                 top=None):
+                 top=None, also=(), also_attest=()):
         base = Path(tempfile.mkdtemp(prefix="s4-selftest-"))
         ra = base.joinpath(*REGISTER_DIR_PARTS, ATTESTATIONS_DIR)
         ra.mkdir(parents=True)
@@ -2110,7 +2112,13 @@ def self_test(f: Findings, docs: dict[str, dict], ctx: Context) -> None:
         if with_attest:
             (ra / "custody-attest-wal-s4-probe-0001.yaml").write_text(
                 yaml.safe_dump(s4_attest), encoding="utf-8")
-        return base, _s4_ctx(grant or s4_grant, wallet or s4_wallet)
+        # wallet-v1.5: `also` indexes the SECOND commissioned body's records and
+        # `also_attest` writes its custody attestation, so a multi-body probe
+        # needs no hand-built tree either.
+        for extra_attest in also_attest:
+            (ra / f"custody-attest-{extra_attest['subject_wallet_ref']}.yaml"
+             ).write_text(yaml.safe_dump(extra_attest), encoding="utf-8")
+        return base, _s4_ctx(grant or s4_grant, wallet or s4_wallet, *also)
 
     def _register_probe(label, base, c, expect_codes):
         probe = Findings()
@@ -2169,9 +2177,9 @@ def self_test(f: Findings, docs: dict[str, dict], ctx: Context) -> None:
     # RE-ISSUANCE shape and nothing else: the predecessor was revoked, the
     # successor issued against it, and the one permitted row repointed. Before
     # wallet-v1.4 the closing loop read only `scope.acts` and demanded a
-    # backing active row for the revoked predecessor too -- a row the
-    # single-row cap forbids -- so no consumer could represent a re-issuance
-    # at all. Three probes, because the fix has three halves: the shape is
+    # backing active row for the revoked predecessor too -- a row the row-count
+    # cap of the day forbade (retired at wallet-v1.5) -- so no consumer could
+    # represent a re-issuance at all. Three probes, because the fix has three halves: the shape is
     # CLEAN, the guard still fires on an ACTIVE grant with no row (the probe
     # above), and a row pointing AT a revoked grant is still refused.
     s4_revoked = dict(
@@ -2207,11 +2215,13 @@ def self_test(f: Findings, docs: dict[str, dict], ctx: Context) -> None:
     _register_probe("self-test/register-tier-act-unattested", base, c,
                     {"register-tier-act-unattested"})
 
-    # Minimal shape: a second row is refused outright.
-    second = dict(s4_row, row_id="row-s4-0002")
-    base, c = _s4_tree([s4_row, second])
-    _register_probe("self-test/register-minimal-shape-exceeded", base, c,
-                    {"register-minimal-shape-exceeded"})
+    # THE ROW-COUNT PROBE IS RETIRED HERE (wallet-v1.5, design D4). It asserted
+    # `register-minimal-shape-exceeded` on a second authority row; that refusal
+    # is retired by name, and a probe expecting a refusal the reader can never
+    # emit is a test of nothing. What replaces it is the multi-body block at the
+    # end of this function -- a positive probe for two resolving bodies and a
+    # negative for a second row that does NOT resolve, which is the invariant
+    # the count was standing in for.
 
     # Unknown field on a row: strict, because this reader IS the shape.
     fat_row = dict(s4_row, extra_field="nope")
@@ -2412,12 +2422,140 @@ def self_test(f: Findings, docs: dict[str, dict], ctx: Context) -> None:
     _register_probe("self-test/seat-council-spelling", base, c,
                     {"register-seat-council-spelling"})
 
-    # The cap is RE-GROUNDED, not raised: a second AUTHORITY row is still
-    # refused even when the seat surface is populated and clean.
-    base, c = _s4_tree([s4_row, dict(s4_row, row_id="row-s4-0002")],
-                       top={SEAT_KEYS_FIELD: real_seats})
-    _register_probe("self-test/seat-keys-do-not-raise-the-cap", base, c,
-                    {"register-minimal-shape-exceeded"})
+    # --------- wallet-v1.5: the SECOND commissioned body, and the pair -------
+    #
+    # widen-register-reader-for-a-second-council, design D4. NOTHING COUNTS ROWS
+    # any more, so what keeps a WIDER register from being a LOOSER one is the
+    # three invariants -- and these probes are what make an edit that silences
+    # one of them red INSIDE the required check every consumer runs, rather than
+    # only in this repository's tests/. The positive probes double as the
+    # retirement assertion: `_register_probe` compares the code set EXACTLY, so
+    # a reader that emitted `register-minimal-shape-exceeded` again would fail
+    # them.
+    #
+    # THE SECOND BODY'S KEYS ARE DERIVED, NOT MINTED. sha256 over a probe label,
+    # spelled the way the reader reads it. No key for a second council exists
+    # yet -- minting one is an operator act in another repository -- and a
+    # real-looking invented value in this file would be a key no ceremony
+    # produced. The four REAL public halves above stay the positive probe for
+    # the body that has them.
+    def _s4_probe_key(label):
+        raw = hashlib.sha256(label.encode("utf-8")).digest()
+        return (base64.urlsafe_b64encode(raw).decode("ascii").rstrip("="),
+                _fingerprint_of(raw))
+
+    s4b_holder = "agent:s4-second-probe"
+    s4b_wallet = dict(
+        s4_wallet, wallet_id="wal-s4-probe-0002",
+        holder={"holder_id": s4b_holder, "holder_class": "agent"},
+        # A DISTINCT did and key_id: check_register reads neither, but a second
+        # body that presented the first body's key identity would be a probe
+        # asserting something this reader exists to refuse one layer up.
+        key_reference={
+            "did": "did:key:z6MkesFwon9Uucr7UuwNmnHg2ci5tXfk5yaJ1jVV33jBaXrd",
+            "key_id": "key-s4-0002", "signature_algorithm": "ed25519"})
+    s4b_grant = dict(
+        s4_grant, grant_id="grant-s4-probe-0002",
+        audience={"wallet_ref": "wal-s4-probe-0002", "holder_ref": s4b_holder})
+    s4b_row = dict(s4_row, row_id="row-s4-0002", holder_ref=s4b_holder,
+                   wallet_ref="wal-s4-probe-0002",
+                   grant_ref="grant-s4-probe-0002")
+    s4b_attest = dict(s4_attest,
+                      attestation_id="attest-custody-wal-s4-probe-0002",
+                      subject_wallet_ref="wal-s4-probe-0002")
+    s4b_records = {"also": (s4b_grant, s4b_wallet),
+                   "also_attest": (s4b_attest,)}
+
+    # ONE SHARED SEAT NAME AND ONE OF ITS OWN. The shared one is the whole
+    # defect: three of the four seats openxFactory's ratified act registers are
+    # names the first body already records.
+    s4b_seats = []
+    for seat_id in ("lead-quality", "lead-second-only"):
+        _pub, _fp = _s4_probe_key(f"self-test/{s4b_holder}/{seat_id}")
+        s4b_seats.append(_seat(seat_id, _pub, _fp, row="row-s4-0002",
+                               council=s4b_holder,
+                               key_id=f"key-s4b-seat-{seat_id}-0001"))
+
+    # INVARIANT (i) POSITIVE, and (iii) with it: two bodies, each resolving to
+    # its OWN wallet, grant and custody attestation, with seats under both
+    # councils -- one of the names shared. CLEAN, and the notes say so.
+    base, c = _s4_tree([s4_row, s4b_row], **s4b_records,
+                       top={SEAT_KEYS_FIELD: real_seats + s4b_seats})
+    _register_probe("self-test/register-two-bodies-clean", base, c, set())
+    probe = Findings()
+    check_register(probe, base, c, now=now)
+    if not any("(2 row(s))" in n for n in probe.notes) or not any(
+            "6 of 6 per-seat signing key(s) adjudicated and resolved" in n
+            for n in probe.notes):
+        f.error("register-assertion-failed",
+                f"self-test/register-two-bodies-clean: the reader must NOTE two "
+                f"rows and six adjudicated seat keys - the consumer gate asserts "
+                f"on these counts POSITIVELY, and a widened reader that admits a "
+                f"second body without reading its seats is the vacuous pass this "
+                f"surface exists to close; got {probe.notes}")
+
+    # INVARIANT (iii) POSITIVE, ISOLATED: one seat NAME, two councils, each
+    # entry attached to its own body's row. Two bodies commonly seat one ROLE,
+    # and a register that cannot say so cannot represent a second body at all.
+    base, c = _s4_tree([s4_row, s4b_row], **s4b_records,
+                       top={SEAT_KEYS_FIELD: [real_seats[0], s4b_seats[0]]})
+    _register_probe("self-test/register-two-councils-one-seat-name", base, c,
+                    set())
+
+    # INVARIANT (iii) NEGATIVE: the SAME seat twice under ONE council, in a
+    # register that also commissions a second body -- still refused, and the
+    # pair key is what tells this apart from the probe above. A DIFFERENT key,
+    # so the collision under test is the seat and not the key material.
+    _dup_pub, _dup_fp = _s4_probe_key(
+        f"self-test/{s4b_holder}/lead-quality/second-answer")
+    s4b_dup = dict(s4b_seats[0], public_key=_dup_pub, key_fingerprint=_dup_fp,
+                   key_id="key-s4b-seat-lead-quality-0002")
+    base, c = _s4_tree([s4_row, s4b_row], **s4b_records,
+                       top={SEAT_KEYS_FIELD: [real_seats[0], s4b_seats[0],
+                                              s4b_dup]})
+    _register_probe("self-test/register-seat-duplicate-within-one-council",
+                    base, c, {"register-seat-duplicate"})
+
+    # INVARIANT (ii) NEGATIVE, in the shape only a MULTI-BODY register can
+    # take: an entry attached to a row that commissions a DIFFERENT body. With
+    # one row this was unreachable; with two it is the mistake a wider register
+    # invites, and it is what stops the second body's seats from descending
+    # from the first body's authority.
+    base, c = _s4_tree([s4_row, s4b_row], **s4b_records,
+                       top={SEAT_KEYS_FIELD: [
+                           dict(s4b_seats[1], authorizing_row="row-s4-0001")]})
+    _register_probe("self-test/register-seat-attached-to-another-bodys-row",
+                    base, c, {"register-seat-council-mismatch"})
+
+    # INVARIANT (i) NEGATIVE, and the probe that makes retiring the count safe:
+    # a second row whose grant does not back it is refused on RESOLUTION. After
+    # this release nothing counts rows, so THIS is what stands between a second
+    # row and a register that commissions nothing.
+    base, c = _s4_tree(
+        [s4_row, s4b_row],
+        also=(dict(s4b_grant, audience={"wallet_ref": "wal-s4-probe-0001",
+                                        "holder_ref": s4b_holder}),
+              s4b_wallet),
+        also_attest=(s4b_attest,),
+        top={SEAT_KEYS_FIELD: real_seats + s4b_seats})
+    _register_probe("self-test/register-second-row-unresolved", base, c,
+                    {"register-grant-mismatch"})
+
+    # `key_id` AND `key_fingerprint` STAY GLOBAL, asserted ACROSS councils --
+    # the uniqueness the pair key must not drag with it. A key is one key, and
+    # two bodies presenting it are two claims on one identity, so a per-council
+    # key namespace would let one private half sign for two bodies with no way
+    # to attribute a seat return.
+    for field in ("key_id", "key_fingerprint"):
+        clash = dict(s4b_seats[1])
+        clash[field] = real_seats[0][field]
+        expected = {"register-seat-duplicate"}
+        if field == "key_fingerprint":
+            expected.add("register-seat-fingerprint-mismatch")
+        base, c = _s4_tree([s4_row, s4b_row], **s4b_records,
+                           top={SEAT_KEYS_FIELD: [real_seats[0], clash]})
+        _register_probe(f"self-test/seat-duplicate-across-councils[{field}]",
+                        base, c, expected)
 
 
 # ------------------- register: the intake's row validator -------------------
@@ -2437,14 +2575,45 @@ REGISTER_ROW_FIELDS = {
     "authority_tier", "grant_ref", "expires_at", "state",
 }
 
-# wallet-v1.2 (add-per-seat-register-entries, design D1): the cap is RETAINED at
-# one and RE-GROUNDED. It bounds AUTHORITY ROWS -- one holder, one target
-# repository, one act, one tier, one expiry -- which is the breadth openxFactory's
-# ratified intake requirement still calls a named successor. It does NOT bound the
-# file's contents generally: the per-seat KEY surface below adds no holder, no
-# target and no act, so recording four keys under one row completes the first
-# shape rather than exceeding it.
-REGISTER_MVP_SINGLE_ROW = 1
+# wallet-v1.5 (widen-register-reader-for-a-second-council, design D1/D3): THE
+# ROW-COUNT CAP IS WITHDRAWN, and the refusal `register-minimal-shape-exceeded`
+# is RETIRED BY NAME and re-pointed at nothing (Q-WRR-1, ruled 2026-09-06).
+# `REGISTER_MVP_SINGLE_ROW = 1` stood here from wallet-v1.0 and was RE-GROUNDED
+# at wallet-v1.2 to bound AUTHORITY ROWS; openxFactory's ratified
+# `register-gate-rules-council-seats` commissions a SECOND body, which cannot
+# descend from the first row, so the cap was the thing that made a second
+# commissioned body unrepresentable. It is NOT raised to two: two is as
+# arbitrary as one, buys exactly one body of headroom, and would have to be
+# edited again by the third body while saying nothing true about why two was
+# right.
+#
+# WHAT STANDS IN ITS PLACE -- the three invariants of openxFactory's Q-GRC-5
+# ruling, each already carrying its OWN precise finding code, so NO NEW CODE is
+# added here and no fact acquires a second name (design D5):
+#
+#   (i)   every AUTHORITY ROW RESOLVES END TO END -- its own scanned wallet, a
+#         grant whose audience, acts, objects, tier and expiry match the row, a
+#         custody attestation where the row stands at tier `act`, and a COMPUTED
+#         expiry in the future. Enforced by check_register's row loop:
+#         register-wallet-unresolved, register-wallet-inactive,
+#         register-grant-unresolved, register-grant-mismatch,
+#         register-tier-act-unattested, register-row-expired,
+#         register-row-malformed.
+#   (ii)  every per-seat entry ATTACHES TO A ROW THAT COMMISSIONS ITS BODY.
+#         Enforced by _check_seat_keys: register-seat-row-unresolved and
+#         register-seat-council-mismatch.
+#   (iii) the pair (`council_id`, `seat_id`) is UNIQUE -- `key_id` and
+#         `key_fingerprint` remaining unique GLOBALLY. Enforced by
+#         _check_seat_keys' duplicate table: register-seat-duplicate.
+#
+# NO NUMERIC BOUND REPLACES THE CAP (Q-WRR-2), and the absence is a DECISION
+# rather than an omission: the register is a permanently human-only surface
+# where every row is one governed operator act, so its breadth is already
+# bounded by what a human can stand behind -- and a number recorded in this
+# reader would go stale on the day a body arrived while saying nothing true
+# about why that number was right. The self-test block above carries a probe
+# per invariant, so an edit that stops resolving one of them reds INSIDE the
+# required check every consumer runs.
 
 # wallet-v1.2, design D3: the top level is a CLOSED read set. Validating one
 # field at a time closes today's vacuous pass and leaves tomorrow's open -- the
@@ -2682,9 +2851,18 @@ def _check_seat_keys(f: Findings, reg: dict, reg_path: Path,
     Four Ed25519 keypairs were minted 2026-08-28, one per seat of codexFactory's
     `merge_readiness_council`, and the register had nowhere to put them: a key
     field on a row fails REGISTER_ROW_FIELDS' exact set equality, four per-seat
-    rows fail the single-row cap, and a new top-level block would have passed
-    only because this reader ignored what it did not read. This function is that
-    third option done properly.
+    rows failed the row-count cap this reader carried until wallet-v1.5, and a
+    new top-level block would have passed only because this reader ignored what
+    it did not read. This function is that third option done properly.
+
+    SECOND BODY (wallet-v1.5, design D2). The cap is now withdrawn, so this
+    surface can carry the seats of MORE THAN ONE commissioned body, and seat
+    identity is the PAIR (council_id, seat_id): a seat name repeated under one
+    council is still refused, and the same name under two councils is admitted,
+    because two bodies commonly seat one ROLE. `key_id` and `key_fingerprint`
+    stay unique across the whole file. Every entry still attaches to a row that
+    commissions ITS body, which is what keeps a wider register from becoming a
+    looser one.
 
     OPTIONAL BY DESIGN (D10), and the absence is a NOTE. If the surface were
     required, the ordering of three merges across two repositories would become
@@ -2724,7 +2902,25 @@ def _check_seat_keys(f: Findings, reg: dict, reg_path: Path,
         if row.get("state") == "active" and expires is not None and expires > now:
             usable[row["row_id"]] = row
 
-    seen: dict[str, dict[str, int]] = {"seat_id": {}, "key_id": {},
+    # wallet-v1.5 (widen-register-reader-for-a-second-council, design D2): the
+    # `seat_id` table is keyed on the PAIR (council_id, seat_id); `key_id` and
+    # `key_fingerprint` stay keyed GLOBALLY, on the value alone.
+    #
+    # WHY THE PAIR, and it is not this reader's invention. hermes-install's
+    # `derive_projection` -- the runtime that CONSUMES this register -- already
+    # keys its own duplicate table on (council_id, seat_id) and refuses only
+    # "the register projects <council>/<seat> more than once". Two bodies
+    # commonly seat the same ROLE (`lead-security` is a role, not a person), and
+    # with a global seat namespace WHICH of a body's seats resolve depends on
+    # what a DIFFERENT body happens to call its own. The reader adopts the key
+    # its consumer already uses, which removes a disagreement between two
+    # programs reading one file rather than inventing a third opinion.
+    #
+    # WHY key_id AND key_fingerprint DO NOT MOVE WITH IT. A key is one key. Two
+    # entries sharing a fingerprint are two claims on one identity, and if they
+    # sit under DIFFERENT councils the claim is worse, not better: one private
+    # half would sign for two bodies and a seat return could not be attributed.
+    seen: dict[str, dict[Any, int]] = {"seat_id": {}, "key_id": {},
                                        "key_fingerprint": {}}
     read = 0
     for i, entry in enumerate(entries):
@@ -2757,15 +2953,33 @@ def _check_seat_keys(f: Findings, reg: dict, reg_path: Path,
         # Duplicates are refused, never resolved by file order: a register
         # naming one seat twice has two answers to "which key is this seat's
         # root", and picking either is choosing which authority to believe.
+        council_id = entry["council_id"]
         for field in seen:
-            first = seen[field].get(entry[field])
+            scoped = field == "seat_id"
+            seen_key = (council_id, entry[field]) if scoped else entry[field]
+            first = seen[field].get(seen_key)
             if first is not None:
-                f.error("register-seat-duplicate",
-                        f"{label} ({seat}): {field} {entry[field]!r} is already "
-                        f"recorded at {SEAT_KEYS_FIELD}[{first}]; a repeated "
-                        f"{field} is refused rather than resolved by file order")
+                if scoped:
+                    f.error("register-seat-duplicate",
+                            f"{label} ({seat}): {field} {entry[field]!r} is "
+                            f"already recorded under council {council_id!r} at "
+                            f"{SEAT_KEYS_FIELD}[{first}]; a repeated {field} "
+                            f"within ONE council is refused rather than resolved "
+                            f"by file order, because that council then has two "
+                            f"answers to which key is that seat's root. The same "
+                            f"seat name under a DIFFERENT council is not a "
+                            f"duplicate: two bodies commonly seat one role")
+                else:
+                    f.error("register-seat-duplicate",
+                            f"{label} ({seat}): {field} {entry[field]!r} is "
+                            f"already recorded at {SEAT_KEYS_FIELD}[{first}]; a "
+                            f"repeated {field} is refused rather than resolved "
+                            f"by file order, and this uniqueness is GLOBAL "
+                            f"across the file whatever the councils -- a key is "
+                            f"one key, and two bodies presenting it are two "
+                            f"claims on one identity")
             else:
-                seen[field][entry[field]] = i
+                seen[field][seen_key] = i
 
         raw = _decode_public_key(entry["public_key"])
         if raw is None:
@@ -2841,7 +3055,7 @@ def _check_seat_keys(f: Findings, reg: dict, reg_path: Path,
 
 def check_register(f: Findings, base_dir: Path, ctx: Context,
                    now: datetime | None = None) -> None:
-    """The register reader. MVP obligations exactly as ratified: every active
+    """The register reader. Obligations exactly as ratified: every active
     review-class grant in the scanned tree needs a backing ACTIVE row -- and
     "active" is READ, not assumed: a grant stamped `revoked` is terminal and
     owes no row (wallet-v1.4; see REVOKED IS EXEMPT at the closing loop);
@@ -2849,7 +3063,15 @@ def check_register(f: Findings, base_dir: Path, ctx: Context,
     attestation); the stored `state` field is checked AGAINST computed time,
     never trusted (N8). Absent register + no review-class grants is the
     legitimate posture of every consumer repository that has not cold-started
-    the arc."""
+    the arc.
+
+    BREADTH IS NOT COUNTED (wallet-v1.5, design D1/D3). The register carries one
+    AUTHORITY ROW per commissioned body and this reader bounds how many bodies
+    it may commission by INVARIANTS rather than by a number: every row resolves
+    end to end, every seat entry attaches to a row that commissions its body,
+    and (council_id, seat_id) is unique. The withdrawn refusal
+    `register-minimal-shape-exceeded` is retired by name and re-pointed at
+    nothing; see the comment where REGISTER_MVP_SINGLE_ROW used to stand."""
     now = now or datetime.now(timezone.utc)
     reg_path = Path(base_dir).joinpath(*REGISTER_DIR_PARTS, REGISTER_FILE)
     if not reg_path.exists():
@@ -2936,14 +3158,14 @@ def check_register(f: Findings, base_dir: Path, ctx: Context,
         shown = reg_path
     f.note(f"intake register read: {shown} ({len(rows)} row(s))")
 
-    if len(rows) > REGISTER_MVP_SINGLE_ROW:
-        f.error("register-minimal-shape-exceeded",
-                f"{reg_path}: {len(rows)} AUTHORITY rows; the ratified first "
-                f"shape is exactly ONE holder/target/act row - wider registers "
-                f"are a named successor change. The cap bounds authority rows, "
-                f"not this file's contents: per-seat signing keys have their own "
-                f"bounded surface ({SEAT_KEYS_FIELD}) and add no holder, target "
-                f"or act")
+    # NO ROW-COUNT REFUSAL IS EMITTED HERE, and the absence is deliberate
+    # (wallet-v1.5, design D1/D3; Q-WRR-1 and Q-WRR-2). `register-minimal-shape-
+    # exceeded` was emitted at this point and is RETIRED BY NAME: the register
+    # commissions one authority row per body, with no bound on how many bodies,
+    # and what admits a row is what it RESOLVES TO rather than its ordinal
+    # position in the file. The three invariants that replace the count are
+    # enumerated where the constant used to stand, and every one of them is
+    # enforced below or in _check_seat_keys with its own existing code.
 
     _check_seat_keys(f, reg, reg_path, rows, now)
 
@@ -3057,7 +3279,8 @@ def check_register(f: Findings, base_dir: Path, ctx: Context,
     # REVOKED IS EXEMPT (wallet-v1.4). Until this release the loop filtered on
     # the review token ALONE and never read the grant's own `state`, so it
     # demanded a backing active row for a grant it had itself been told was
-    # revoked -- while `REGISTER_MVP_SINGLE_ROW` (above) forbids the second row
+    # revoked -- while the row-count cap this reader then carried
+    # (`REGISTER_MVP_SINGLE_ROW`, RETIRED at wallet-v1.5) forbade the second row
     # such a demand would need. The reader could therefore not represent ANY
     # re-issuance: revoking a review-class grant and issuing its successor is
     # the runbook's §5.1 act, and every consumer that performed it went red on
