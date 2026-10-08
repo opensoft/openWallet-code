@@ -1,0 +1,26 @@
+# openWallet-code code owners.
+#
+# The floor is narrow on purpose, as openXwallet's is: the two checkers, the
+# contract content they check, and the workflows that decide whether they run
+# at all. A pull request that could change what runs cannot clear itself.
+#
+# PRE-CARVE: none of these paths exists yet. They arrive at the carve from
+# opensoft/openXwallet at 90111df262d6f54f7e82651d860adc12345f83f4, and the
+# rules are written first so that the pull request carrying them is already
+# routed. openXwallet's rows for /scripts/verify-contract-pin.py and
+# /contract_pin.yaml have no counterpart here: the vendored envelope they guard
+# stays in openXwallet.
+
+# The conformance validator. Its diff from the carve is the declared hunks
+# (a)-(e) and nothing else. A change here is a contract-behaviour change.
+/scripts/validate-openxwallet.py   @brettheap
+
+# The syntax gate.
+/scripts/wallet-yaml-syntax-gate.py   @brettheap
+
+# The contract content: both families, the eight digested artifacts, the
+# packaged corpus and the corpus binding.
+/contracts/   @brettheap
+
+# Whether the checks run, in what order, and under which status-check token.
+/.github/workflows/   @brettheap
