@@ -1,0 +1,42 @@
+# expected_failure: declared-key-duplicate
+# expected_failure_detail: declaration order decide which declaration
+# requirement: OXW-R5
+# VIOLATES core R5: one key identifier declared twice in one wallet.
+#
+# The two declarations name DIFFERENT custody, which is what makes this more
+# than untidiness. Index tables are last-write-wins, so an exercise presenting
+# `key-twice-seat-0013` would resolve to whichever declaration was read last —
+# and its custody, and therefore what its signature is taken to evidence, would
+# be decided by declaration ORDER inside a file.
+#
+# The inter-wallet ambiguity refusal cannot see this case: that check dedupes by
+# wallet id, so one record declaring an identifier twice presents as a single
+# owner. Which is why the duplicate is refused at the RECORD, where the defect
+# is, rather than at the exercise, where it is only observable.
+schema_version: 1
+kind: xfactory_wallet_record
+wallet_id: wal-agent-twice-0013
+holder:
+  holder_id: agent:review-council-twice
+  holder_class: agent
+key_reference:
+  did: "did:web:xforge.us:wallets:agent-twice"
+  key_id: key-twice-primary-0013
+  signature_algorithm: ed25519
+custody:
+  model: isolated_per_use_authorized
+  registry_version: 1
+keys:
+  - did: "did:web:xforge.us:wallets:agent-twice:seat"
+    key_id: key-twice-seat-0013
+    key_fingerprint: sha256:6ada99966134615c07adb84cb71a87876c087795552f5eb01436a86fb2464c11
+    custody:
+      model: holder_readable
+      registry_version: 1
+  - did: "did:web:xforge.us:wallets:agent-twice:seat"
+    key_id: key-twice-seat-0013
+    key_fingerprint: sha256:4e59e541063c1d80f9cc263451df4039acd51d7d5f192a7b91baaad57f5631a8
+    custody:
+      model: isolated_invocable
+      registry_version: 1
+state: active

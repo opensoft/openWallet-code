@@ -1,0 +1,24 @@
+# VALID grant to a MULTI-KEY wallet. Authority is addressed to the WALLET, never
+# to one of its keys: the audience shape admits `wallet_ref` and `holder_ref`
+# and nothing else, which is how "grants stay wallet-level" is enforced by shape
+# rather than by rule. Any key of the audience wallet may present this grant,
+# and what each key's signature EVIDENCES is then that key's own custody.
+schema_version: 1
+kind: xfactory_wallet_grant
+grant_id: grant-council-act-0011
+audience:
+  wallet_ref: wal-agent-council-0011
+  holder_ref: agent:review-council-demo
+scope:
+  acts:
+    - create_transaction
+  authority_tier: act
+  approval_posture:
+    hermes_approval_required_before_apply: true
+    authority_agents_may_approve: false
+    human_escalation_required_for:
+      - irreversible_external_effect
+expires_at: "2026-12-31T23:59:59Z"
+issued_at: "2026-08-28T09:30:00Z"
+issued_by: opensoft
+state: active

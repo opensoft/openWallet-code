@@ -1,0 +1,45 @@
+# expected_failure: revoked-chain-exercised
+# expected_failure_detail: a retired key presents nothing
+# requirement: OXW-R6
+# VIOLATES core R6: an exercise permitted under a declared key whose
+# declaration records it as retired.
+#
+# `key-council-retired-0011` is still DECLARED, and deliberately so: deleting a
+# retired key's declaration would retroactively invalidate every already-
+# recorded exercise that named it, because this validator re-adjudicates every
+# family-kind file in a scanned tree on every run. A rotation must not rewrite
+# the verdict on committed history. So the declaration is append-only and the
+# STATE is what moves.
+#
+# Which means the refusal has to happen at USE, and it is the same rule that
+# refuses a revoked grant or a suspended wallet — issuance-time validity is not
+# evidence of current validity — so it reports under the same code rather than
+# acquiring a second name for one rule.
+#
+# What is NOT refused: the wallet's own standing is `active` and its other keys
+# keep presenting its authority. Retiring one of several keys must not park the
+# rest, or rotation becomes an outage.
+schema_version: 1
+kind: xfactory_wallet_grant_exercise
+exercise_id: exr-council-retired-key-0011
+grant_ref: grant-council-act-0011
+act: create_transaction
+object_ref: change-candidate:PR-0011
+occurred_at: "2026-08-28T10:20:00Z"
+event_class: authenticated
+proof_of_possession:
+  presented: true
+  verified: true
+  signature_algorithm: ed25519
+  signed_over: request_digest
+  presenting_key_ref: key-council-retired-0011
+attribution:
+  mode: key_attributed
+  presenting_key_ref: key-council-retired-0011
+  wallet_ref: wal-agent-council-0011
+  holder_ref: agent:review-council-demo
+custody_model_in_force: holder_readable
+revocation_check:
+  performed_at_exercise: true
+  result: active
+outcome: permitted
