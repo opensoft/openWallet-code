@@ -41,14 +41,6 @@ jobs:
 
       - run: pip install pyyaml jsonschema rfc3339-validator
 
-      # FIRST, before anything reads the vendored schema. main() checks only
-      # ENVELOPE_SCHEMA_PATH.is_file() -- PRESENCE, not identity -- while rule
-      # (g) reads the approval-scope vocabulary out of that very file, so an
-      # unverified swap would silently redefine the vocabulary this gate
-      # enforces. Fails closed, and its refusal names its own remediation.
-      - name: Verify the vendored openxFactory artifact against contract_pin.yaml
-        run: python3 scripts/verify-contract-pin.py
-
       - run: python3 scripts/wallet-yaml-syntax-gate.py .
 
       - run: python3 scripts/validate-openxwallet.py .

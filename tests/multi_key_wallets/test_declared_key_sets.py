@@ -105,17 +105,12 @@ def _key(key_id: str, *, custody: str, with_public_half: bool = True,
 
 
 def _grant(grant_id: str, *, wallet_id: str, tier: str, act: str) -> dict:
-    posture = {
-        "hermes_approval_required_before_apply": tier != "act_unsupervised",
-        "authority_agents_may_approve": False,
-    }
     return {
         "schema_version": 1,
         "kind": "xfactory_wallet_grant",
         "grant_id": grant_id,
         "audience": {"wallet_ref": wallet_id, "holder_ref": f"agent:{wallet_id}"},
-        "scope": {"acts": [act], "authority_tier": tier,
-                  "approval_posture": posture},
+        "scope": {"acts": [act], "authority_tier": tier},
         "expires_at": "2099-12-31T23:59:59Z",
         "issued_at": "2026-08-28T09:00:00Z",
         "issued_by": "opensoft",

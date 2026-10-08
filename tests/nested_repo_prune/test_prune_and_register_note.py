@@ -1,10 +1,11 @@
-"""wallet-v1.1's two behaviours, proven the way CI will see them.
+"""wallet-v1.1's nested-repository prune, proven the way CI will see it.
 
 Realizes P2b (group 4) of the ratified openxFactory change
 `split-openxwallet-repo` — `design.md` D4 (the sweep prunes nested
-repositories) and D3 (the register reader emits a durable happy-path NOTE) —
-under `clarifications.md` N4. Speckit feature
-`specs/013-nested-repo-prune-register-note/`.
+repositories) — under `clarifications.md` N4. Speckit feature
+`specs/013-nested-repo-prune-register-note/`. Its other behaviour, the
+intake-register read note, is not part of the neutral standard and is
+not tested here (split-openwallet-neutral-core).
 
 Discipline copied from `tests/wallet_yaml_syntax_gate/test_gate.py`: drive the
 script as a SUBPROCESS, not an in-process import, so the exit codes the
@@ -37,15 +38,12 @@ SCAN_NOTE = re.compile(
     r"(\d+) document\(s\) skipped as another kind$", re.M)
 PRUNE_NOTE = re.compile(
     r"^note  nested repositories pruned \(not adjudicated\): (.+)$", re.M)
-REGISTER_NOTE = re.compile(
-    r"^note  intake register read: (\S+) \((\d+) row\(s\)\)$", re.M)
-ABSENT_REGISTER_NOTE = "note  no intake register at this tree; nothing to read"
 # wallet-v1.3 (`add-multi-key-wallets`) added four positives and nine negatives
 # for the declared key set. The count is LITERAL, not a wildcard, for the same
 # reason the register's seat-key count is: a corpus that silently lost a fixture
 # and a corpus that passed are both "green" to a pattern.
-CORPUS_NOTE = ("note  corpus: 21 positive example(s), 45 negative "
-               "confirmation(s) across 13/13 requirements")
+CORPUS_NOTE = ("note  corpus: 21 positive example(s), 42 negative "
+               "confirmation(s) across 11/11 requirements")
 
 # A minimal VALID wallet record, kept independent of the packaged corpus on
 # purpose: a test that copies a corpus example is also a test of the corpus
@@ -244,166 +242,6 @@ def test_the_repository_itself_still_reports_its_own_corpus(tmp_path):
     r = _run(REPO_ROOT)
     assert CORPUS_NOTE in r.stdout, r.stdout
     assert r.returncode == 0, r.stdout + r.stderr
-
-
-# ------------------- US2: the durable register-read NOTE -------------------
-
-FUTURE = "2099-06-30T23:59:59Z"
-REVIEW_TOKEN = "review"
-ROOT_ISSUER = "Brett.Heap@opensoft.one"
-
-REGISTER_WALLET = dict(WALLET, wallet_id="wal-register-probe-0001",
-                       holder={"holder_id": "agent:register-probe",
-                               "holder_class": "agent"})
-REGISTER_GRANT = {
-    "schema_version": 1,
-    "kind": "xfactory_wallet_grant",
-    "grant_id": "grant-register-probe-0001",
-    "audience": {"wallet_ref": "wal-register-probe-0001",
-                 "holder_ref": "agent:register-probe"},
-    "scope": {
-        "acts": [REVIEW_TOKEN],
-        "authority_tier": "act",
-        "objects": ["opensoft/openxFactory"],
-        "approval_posture": {
-            "hermes_approval_required_before_apply": True,
-            "authority_agents_may_approve": False,
-            "human_escalation_required_for": ["irreversible_external_effect"],
-        },
-    },
-    "expires_at": FUTURE,
-    "issued_at": "2026-08-24T00:00:00Z",
-    "state": "active",
-    "issued_by": ROOT_ISSUER,
-}
-REGISTER_ROW = {
-    "row_id": "row-register-probe-0001",
-    "holder_ref": "agent:register-probe",
-    "wallet_ref": "wal-register-probe-0001",
-    "target_repo": "opensoft/openxFactory",
-    "act": REVIEW_TOKEN,
-    "authority_tier": "act",
-    "grant_ref": "grant-register-probe-0001",
-    "expires_at": FUTURE,
-    "state": "active",
-}
-ATTESTATION = {
-    "attestation_id": "attest-custody-wal-register-probe-0001",
-    "subject_wallet_ref": "wal-register-probe-0001",
-    "custody_model_attested": "holder_readable",
-    "verified_by": {"name": "Brett Heap", "role": "responsible operator",
-                    "standing": "Human Escalation Contract"},
-    "verified_at": "2026-08-24T12:00:00Z",
-    "verified_against": {"method": "operator-minted ed25519 keypair",
-                         "isolation_claimed": False},
-}
-
-
-def _register_tree(root: Path, rows: list[dict] | None = None) -> Path:
-    """A tree whose register reads CLEAN, end to end.
-
-    Shaped on the validator's own S4 self-test fixtures (`_s4_tree`,
-    `s4_row`, `s4_grant`, `s4_wallet`, `s4_attest`), which are local to
-    `self_test()` and so cannot be imported — a subprocess-driven test needs
-    them as FILES anyway.
-    """
-    records = root / "governance" / "wallets"
-    records.mkdir(parents=True)
-    (records / "wallet.yaml").write_text(
-        yaml.safe_dump(REGISTER_WALLET), encoding="utf-8")
-    (records / "grant.yaml").write_text(
-        yaml.safe_dump(REGISTER_GRANT), encoding="utf-8")
-
-    ra = root / "governance" / "review-authority"
-    (ra / "attestations").mkdir(parents=True)
-    # wallet-v1.2 (`add-per-seat-register-entries`): the top level is a CLOSED
-    # read set and `revocation_staleness_bound` is REQUIRED, so this fixture
-    # declares one. wallet-v1.1's two behaviours are unchanged by that — which is
-    # what these tests still assert — but a register without the bound is no
-    # longer a readable register, and a fixture that pretended otherwise would be
-    # testing a shape no consumer can commit.
-    (ra / "register.yaml").write_text(
-        yaml.safe_dump({"register_version": 1,
-                        "revocation_staleness_bound": "P7D",
-                        "rows": rows if rows is not None else [REGISTER_ROW]}),
-        encoding="utf-8")
-    (ra / "attestations" / "custody-attest.yaml").write_text(
-        yaml.safe_dump(ATTESTATION), encoding="utf-8")
-    return root
-
-
-def test_a_successful_register_read_says_so_exactly_once(tmp_path):
-    """D3's durable positive line, and the whole reason it exists.
-
-    Before this, `check_register` was SILENT on success: the only output naming
-    the register was a failure finding, and the absent-register note named no
-    path — so "the register was read" could only be inferred from a conjunction
-    of absences.
-    """
-    r = _run(_register_tree(tmp_path / "consumer"))
-    hits = REGISTER_NOTE.findall(r.stdout)
-    assert len(hits) == 1, r.stdout
-    path, rows = hits[0]
-    assert path == "governance/review-authority/register.yaml", r.stdout
-    assert rows == "1", r.stdout
-
-
-def test_the_register_note_leaves_a_strict_run_green(tmp_path):
-    """S4.5: an `f.note`, NEVER a warning.
-
-    `report()` reds a `--strict` run on warnings and a live consumer runs
-    `--strict`, so the CLASS of this line is a compatibility term, not a
-    presentation choice.
-    """
-    root = _register_tree(tmp_path / "consumer")
-    plain = _run(root)
-    strict = _run(root, "--strict")
-    assert plain.returncode == 0, plain.stdout + plain.stderr
-    assert strict.returncode == 0, strict.stdout + strict.stderr
-    assert REGISTER_NOTE.search(strict.stdout), strict.stdout
-    assert "WARN" not in strict.stdout, strict.stdout
-
-
-def test_the_register_path_is_relative_to_the_scan_root(tmp_path):
-    """Relative, so the line is identical on a laptop and on a CI runner.
-
-    The downstream consumer-gate test (D3, landing at P3) asserts on it; an
-    absolute path would differ between checkouts and force a substring match.
-    """
-    root = _register_tree(tmp_path / "deeply" / "nested" / "consumer")
-    r = _run(root)
-    m = REGISTER_NOTE.search(r.stdout)
-    assert m, r.stdout
-    assert not Path(m.group(1)).is_absolute(), m.group(1)
-    assert str(tmp_path) not in m.group(1), m.group(1)
-
-
-def test_no_register_keeps_the_ratified_absent_behaviour(tmp_path):
-    """Unchanged: absent register + no review grants is a legitimate posture."""
-    root = tmp_path / "root"
-    _write_wallet(root / "records", "wal-noreg-0001")
-
-    r = _run(root, "--strict")
-    assert ABSENT_REGISTER_NOTE in r.stdout, r.stdout
-    assert REGISTER_NOTE.search(r.stdout) is None, r.stdout
-    assert r.returncode == 0, r.stdout + r.stderr
-
-
-def test_a_register_inside_a_nested_repo_is_not_read(tmp_path):
-    """Both behaviours meeting: the register is resolved from the SCAN ROOT.
-
-    A consumer that pointed the validator at the nested product instead of its
-    own root would read the product's register, not its own — which is why
-    D4 refused "narrow the scan scope" as the prune's mechanism.
-    """
-    root = tmp_path / "root"
-    root.mkdir()
-    _register_tree(_nested_repo(root / "pinned-product", "file"))
-
-    r = _run(root)
-    assert REGISTER_NOTE.search(r.stdout) is None, r.stdout
-    assert ABSENT_REGISTER_NOTE in r.stdout, r.stdout
-    assert _pruned(r.stdout) == ["pinned-product"], r.stdout
 
 
 # ------------------- US3: nothing a live consumer keys on moves -------------
