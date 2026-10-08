@@ -1,0 +1,52 @@
+# expected_failure: custody-model-mismatch
+# expected_failure_detail: records custody 'holder_readable' in force
+# requirement: OXW-R4
+# VIOLATES core R4: a SINGLE-KEY wallet's exercise claiming a custody model its
+# wallet does not declare.
+#
+# THIS FIXTURE IS A REGRESSION PROOF, and it is here because the corpus did not
+# have one. `custody-model-mismatch` shipped unprobed: no packaged negative
+# pinned it, so when add-multi-key-wallets moved the check's comparison BASIS
+# from "the audience wallet's declaration" to "the presenting key's
+# declaration", nothing in this corpus would have noticed if the rule had
+# quietly stopped firing for every record in the estate.
+#
+# The single-key path is the one that had to keep working unchanged, and it is
+# the one the change could most easily have broken: `key_reference` carries no
+# custody block of its own, so a basis lookup that returned nothing for a
+# primary key would have deleted this check silently and everywhere.
+#
+# wal-agent-poster-0001 declares `isolated_per_use_authorized`. This record
+# claims `holder_readable` in force, which would understate what its signature
+# evidenced — and the check must refuse a record that misstates its own custody
+# in EITHER direction, because the audit line depends on the value being true,
+# not on it being conservative.
+schema_version: 1
+kind: xfactory_wallet_grant_exercise
+exercise_id: exr-single-key-basis-0017
+grant_ref: grant-posting-derived-0002
+act: post_transaction
+object_ref: purchase-invoice:LXRP0017
+occurred_at: "2026-08-28T10:25:00Z"
+event_class: authenticated
+proof_of_possession:
+  presented: true
+  verified: true
+  signature_algorithm: ed25519
+  signed_over: request
+  presenting_key_ref: key-poster-0001
+attribution:
+  mode: key_attributed
+  presenting_key_ref: key-poster-0001
+  wallet_ref: wal-agent-poster-0001
+  holder_ref: agent:ledger-poster
+custody_model_in_force: holder_readable
+revocation_check:
+  performed_at_exercise: true
+  result: active
+constraint_evaluations:
+  - constraint_ref: dhc-posting-sod-0001
+    prior_act_holder_ref: agent:ledger-creator
+    this_holder_ref: agent:ledger-poster
+    satisfied: true
+outcome: permitted

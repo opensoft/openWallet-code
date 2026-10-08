@@ -1,0 +1,40 @@
+# expected_failure: declared-key-raises-authority
+# expected_failure_detail: never a source of more of it
+# requirement: OXW-R4
+# VIOLATES core R4: a declared key claiming a custody ceiling above its
+# wallet's own.
+#
+# The wallet declares `holder_readable` — ceiling `act`, evidencing the
+# ENVIRONMENT — and then declares a key under `isolated_per_use_authorized`,
+# ceiling `act_unsupervised`. Read charitably it says "this wallet has a strong
+# key too". Read as a machine reads it, the wallet's declared ceiling stops
+# being a fact about the RECORD and becomes a fact about the primary key only,
+# so every consumer that reads a wallet's custody to decide what it may be
+# granted is reading a partial answer.
+#
+# Keys are PRESENTERS of a wallet's single authority and never sources of more
+# of it. Raising authority stays a question about the wallet's custody, and the
+# refusal is keyed on RANK rather than on the tier's name — a registry that
+# renamed its top tier must not be able to slip past this.
+schema_version: 1
+kind: xfactory_wallet_record
+wallet_id: wal-agent-outranks-0015
+holder:
+  holder_id: agent:review-council-outranks
+  holder_class: agent
+key_reference:
+  did: "did:web:xforge.us:wallets:agent-outranks"
+  key_id: key-outranks-primary-0015
+  signature_algorithm: ed25519
+custody:
+  model: holder_readable
+  registry_version: 1
+keys:
+  - did: "did:key:z6MksQobkgn1QGqBzbV6Hb3G1XJYUbyJ1Spqwumvhox6J59W"
+    key_id: key-outranks-strong-0015
+    key_fingerprint: sha256:7ee2861d720e6da978f0d1805aa6e2cd95cd990d9cb1380d3ceef2a427c63299
+    public_key_multibase: z6MksQobkgn1QGqBzbV6Hb3G1XJYUbyJ1Spqwumvhox6J59W
+    custody:
+      model: isolated_per_use_authorized
+      registry_version: 1
+state: active

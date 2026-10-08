@@ -1,0 +1,46 @@
+# expected_failure: custody-model-mismatch
+# expected_failure_detail: presenting key 'key-council-seat-a-0011'
+# requirement: OXW-R4
+# VIOLATES core R4: an exercise recording the custody of a DIFFERENT key of the
+# same wallet as the custody in force.
+#
+# The presenting key is seat A, which declares `holder_readable` — a signature
+# under it evidences that the ENVIRONMENT acted. The record claims
+# `isolated_invocable`, which is seat B's declaration and is also a real member
+# of this same wallet's key set. So the record is not naming a model nobody
+# declared; it is naming a model the wallet does declare, for a key that did not
+# sign.
+#
+# That is the failure a wallet-level basis could not see. Before the key set
+# existed, the comparison was against THE WALLET's single declaration, and a
+# multi-key wallet checked that way would accept any of its own keys' custody on
+# any of its exercises — the audit line "the record carries the custody model in
+# force at the time" reduced to "some custody this wallet has somewhere".
+#
+# `isolated_invocable` and `holder_readable` even share a ceiling, so nothing
+# downstream would notice. The two differ in BLAST RADIUS, not in authority, and
+# an audit reader is entitled to the true one.
+schema_version: 1
+kind: xfactory_wallet_grant_exercise
+exercise_id: exr-council-wrong-custody-0011
+grant_ref: grant-council-act-0011
+act: create_transaction
+object_ref: change-candidate:PR-0011
+occurred_at: "2026-08-28T10:15:00Z"
+event_class: authenticated
+proof_of_possession:
+  presented: true
+  verified: true
+  signature_algorithm: ed25519
+  signed_over: request_digest
+  presenting_key_ref: key-council-seat-a-0011
+attribution:
+  mode: key_attributed
+  presenting_key_ref: key-council-seat-a-0011
+  wallet_ref: wal-agent-council-0011
+  holder_ref: agent:review-council-demo
+custody_model_in_force: isolated_invocable
+revocation_check:
+  performed_at_exercise: true
+  result: active
+outcome: permitted

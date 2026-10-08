@@ -1,0 +1,46 @@
+# Wallet contract validation gate for every pull request to main (feature
+# 010-wallet-validator-ci, carried from openxFactory by the wallet-v1.0 carve).
+# REQUIRED on this repository's default branch by openXwallet's own ruleset,
+# created in EVALUATE mode and promoted to ACTIVE once the check had reported
+# once -- day-one REQUIRED is impossible, because GitHub cannot require a check
+# that has never reported. See docs/openxwallet-cutover-runbook.md.
+#
+# The job id is deliberately the SAME TOKEN as openxFactory's: the token names
+# the check's FUNCTION, and distinct repositories are distinct namespaces. A
+# different name would need its own runbook language and its own rename
+# successor.
+#
+# The job carries no display name on purpose: the status check must surface
+# as exactly `wallet-validation` (FR-007), the literal token the ruleset
+# pins; a distinct job display name silently de-advises the gate.
+#
+# THIS FILE IS THE ONE CARVED FILE THE SCAFFOLD EDITED, and the edit is the
+# verify step below. It is declared in docs/byte-identity-wallet-v1.0.md so it
+# is never mistaken for drift. The byte-identity floor covers the contract
+# BYTES, the two validators and the corpus -- not this workflow.
+name: wallet-validation
+
+on:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  wallet-validation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install pyyaml jsonschema rfc3339-validator
+
+      - run: python3 scripts/wallet-yaml-syntax-gate.py .
+
+      - run: python3 scripts/validate-openxwallet.py .

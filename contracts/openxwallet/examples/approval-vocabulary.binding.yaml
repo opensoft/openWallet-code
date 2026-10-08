@@ -1,0 +1,23 @@
+# The CORPUS VOCABULARY BINDING: the one declared vocabulary the packaged
+# corpus is adjudicated under (split-openwallet-neutral-core, design.md D4;
+# RULED Q6, "Document plus pointer, fail closed (Recommended)").
+#
+# The packaged positives and negatives carry `approval_posture` with these
+# three keys, and they are teaching fixtures, not live records. So
+# `scripts/validate-openxwallet.py` reads this file for LAYER 1 only, through
+# CORPUS_VOCABULARY_BINDING (pointer: approval_posture_terms). A repo scan
+# (layer 2) never reads it. A scan uses the caller's own binding, and with
+# none declared it refuses every posture key. A teaching binding must not
+# admit a live record's posture.
+#
+# It is not a record and carries no family `kind:`. Its name does not match
+# `*.example.yaml`, so the corpus loop does not adjudicate it. Each key's
+# `type` is read as rule (g) reads a binding's terms.
+schema_version: 1
+approval_posture_terms:
+  hermes_approval_required_before_apply:
+    type: boolean
+  authority_agents_may_approve:
+    type: boolean
+  human_escalation_required_for:
+    type: array
