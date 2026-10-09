@@ -26,16 +26,19 @@ code in one repository is reviewed identically.
 
 Topic: `xf-project-openwallet`.
 
-## Status: pre-carve
+## Status: carved
 
-Content arrives at the carve from
+Content was carved from
 [opensoft/openXwallet](https://github.com/opensoft/openXwallet) at
-`90111df262d6f54f7e82651d860adc12345f83f4`. openXwallet's
-`docs/openwallet-carve-manifest.yaml` declares every path that moves here,
-byte for byte and at an unchanged repository-relative path. The declared edits
-are applied on top of the pure carve as one auditable diff. The procedure is
-the assembly root's `docs/openwallet-cutover-runbook.md`. Until the carve, this
-leg holds only its seed files.
+`90111df262d6f54f7e82651d860adc12345f83f4` and landed as this repository's #2
+(merge `72313daa`). openXwallet's `docs/openwallet-carve-manifest.yaml`
+declares every path that moved here, byte for byte and at an unchanged
+repository-relative path. The declared edits were applied on top of the pure
+carve as one auditable diff. The procedure is the assembly root's
+`docs/openwallet-cutover-runbook.md`. The assembly root pins this leg at
+`72313daa` (`wallet-v1.6`, at the time of writing). Post-carve maintenance
+follows, starting with task 8.2 of openXwallet's
+`split-openwallet-neutral-core`.
 
 ## What this leg owns after the split
 

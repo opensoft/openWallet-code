@@ -33,15 +33,16 @@ work here happens in `worktrees/<NNN-feature-name>/code/` under the root.
 
 ## What this leg is
 
-**Status: pre-carve.** This leg's content arrives at the carve from
-opensoft/openXwallet at `90111df262d6f54f7e82651d860adc12345f83f4`. The carve is
-governed by openXwallet's `split-openwallet-neutral-core` (tracked in
-opensoft/openXwallet#25), and its declared path mapping is openXwallet's
-`docs/openwallet-carve-manifest.yaml`. Until the carve, this leg holds only its
-seed files.
+**Status: carved.** This leg's content was carved from opensoft/openXwallet at
+`90111df262d6f54f7e82651d860adc12345f83f4` and landed as this repository's #2
+(merge `72313daa`). The carve was governed by openXwallet's
+`split-openwallet-neutral-core` (tracked in opensoft/openXwallet#25), and its
+declared path mapping is openXwallet's `docs/openwallet-carve-manifest.yaml`.
+The assembly root pins this leg at `72313daa` (`wallet-v1.6`, at the time of
+writing). Post-carve maintenance follows, starting with that change's task 8.2.
 
 After the split this leg owns the neutral wallet standard's bytes, every path at
-the repository-relative path it has in openXwallet today:
+the repository-relative path it had in openXwallet at the carve commit:
 
 - **both contract families.** These are `contracts/openxwallet/` (less the three
   `grant-review-*` negatives, which stay in openXwallet) and
@@ -51,12 +52,14 @@ the repository-relative path it has in openXwallet today:
 - **the corpus binding**, added under `contracts/openxwallet/examples/` (RULED
   Q6);
 - **the conformance validator**, `scripts/validate-openxwallet.py`. Its diff
-  from the carve is exactly the declared hunks (a)-(e) and nothing else;
+  from the carve is the declared hunks (a)-(e) plus post-carve maintenance
+  commits, each reviewed as a contract-behaviour change. The first is task
+  8.2's code-leg part, the format-checker refusal's pointer;
 - **the syntax gate**, `scripts/wallet-yaml-syntax-gate.py`;
 - **their tests**: `tests/wallet_yaml_syntax_gate/`, `tests/multi_key_wallets/`
   and the prune half of `tests/nested_repo_prune/`;
 - **the checks `wallet-validation` and `pytest-suite`**, run from INSIDE this
-  leg. `wallet-validation` arrives without its envelope-verify step.
+  leg. `wallet-validation` arrived without its envelope-verify step.
 
 The contracts are here, beside their validator, by a ruling: Brett Heap,
 2026-10-08, "Code leg, declared override (Recommended)" (RULED Q7). It overrides
