@@ -1,0 +1,66 @@
+[
+  {
+    "name": "ascii",
+    "public_test_seed_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+    "public_key_hex": "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8",
+    "binding": {
+      "binding_ref": "binding:vector:1",
+      "wallet_ref": "wallet:vector",
+      "key_ref": "key:vector:1",
+      "subject_ref": "subject:machine:vector",
+      "custody_ref": "custody:public-test-only",
+      "revision": 3,
+      "not_before": 900,
+      "expires_at": 1200,
+      "revoked": false
+    },
+    "now": 1000,
+    "unsigned_canonical_utf8": "{\"alg\":\"Ed25519\",\"binding_ref\":\"binding:vector:1\",\"binding_revision\":3,\"challenge_digest\":\"sha256:1111111111111111111111111111111111111111111111111111111111111111\",\"custody_ref\":\"custody:public-test-only\",\"key_ref\":\"key:vector:1\",\"profile\":\"openwallet.challenge-proof.v0\",\"subject_ref\":\"subject:machine:vector\",\"wallet_ref\":\"wallet:vector\"}",
+    "message_hex": "6f70656e57616c6c65742e6368616c6c656e67652d70726f6f662e7630007b22616c67223a2245643235353139222c2262696e64696e675f726566223a2262696e64696e673a766563746f723a31222c2262696e64696e675f7265766973696f6e223a332c226368616c6c656e67655f646967657374223a227368613235363a31313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131222c22637573746f64795f726566223a22637573746f64793a7075626c69632d746573742d6f6e6c79222c226b65795f726566223a226b65793a766563746f723a31222c2270726f66696c65223a226f70656e77616c6c65742e6368616c6c656e67652d70726f6f662e7630222c227375626a6563745f726566223a227375626a6563743a6d616368696e653a766563746f72222c2277616c6c65745f726566223a2277616c6c65743a766563746f72227d",
+    "proof": {
+      "profile": "openwallet.challenge-proof.v0",
+      "alg": "Ed25519",
+      "binding_ref": "binding:vector:1",
+      "wallet_ref": "wallet:vector",
+      "key_ref": "key:vector:1",
+      "subject_ref": "subject:machine:vector",
+      "custody_ref": "custody:public-test-only",
+      "binding_revision": 3,
+      "challenge_digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+      "signature": "d08p_ks14QvJyc8Utnf4b1uV0egzDWiIcxB3QihWO-JeU1VM98VJVyUJoVBk_9Pj5Yz6PZV06ZvRYBb-GuDjBA"
+    },
+    "wire_utf8": "{\"alg\":\"Ed25519\",\"binding_ref\":\"binding:vector:1\",\"binding_revision\":3,\"challenge_digest\":\"sha256:1111111111111111111111111111111111111111111111111111111111111111\",\"custody_ref\":\"custody:public-test-only\",\"key_ref\":\"key:vector:1\",\"profile\":\"openwallet.challenge-proof.v0\",\"signature\":\"d08p_ks14QvJyc8Utnf4b1uV0egzDWiIcxB3QihWO-JeU1VM98VJVyUJoVBk_9Pj5Yz6PZV06ZvRYBb-GuDjBA\",\"subject_ref\":\"subject:machine:vector\",\"wallet_ref\":\"wallet:vector\"}"
+  },
+  {
+    "name": "unicode-and-max-safe-revision",
+    "public_test_seed_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+    "public_key_hex": "03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8",
+    "binding": {
+      "binding_ref": "binding:vector:1",
+      "wallet_ref": "wallet:é/🚀",
+      "key_ref": "key:vector:1",
+      "subject_ref": "subject:machine:vector",
+      "custody_ref": "custody:public-test-only",
+      "revision": 9007199254740991,
+      "not_before": 900,
+      "expires_at": 1200,
+      "revoked": false
+    },
+    "now": 1000,
+    "unsigned_canonical_utf8": "{\"alg\":\"Ed25519\",\"binding_ref\":\"binding:vector:1\",\"binding_revision\":9007199254740991,\"challenge_digest\":\"sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff\",\"custody_ref\":\"custody:public-test-only\",\"key_ref\":\"key:vector:1\",\"profile\":\"openwallet.challenge-proof.v0\",\"subject_ref\":\"subject:machine:vector\",\"wallet_ref\":\"wallet:é/🚀\"}",
+    "message_hex": "6f70656e57616c6c65742e6368616c6c656e67652d70726f6f662e7630007b22616c67223a2245643235353139222c2262696e64696e675f726566223a2262696e64696e673a766563746f723a31222c2262696e64696e675f7265766973696f6e223a393030373139393235343734303939312c226368616c6c656e67655f646967657374223a227368613235363a66666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666222c22637573746f64795f726566223a22637573746f64793a7075626c69632d746573742d6f6e6c79222c226b65795f726566223a226b65793a766563746f723a31222c2270726f66696c65223a226f70656e77616c6c65742e6368616c6c656e67652d70726f6f662e7630222c227375626a6563745f726566223a227375626a6563743a6d616368696e653a766563746f72222c2277616c6c65745f726566223a2277616c6c65743ac3a92ff09f9a80227d",
+    "proof": {
+      "profile": "openwallet.challenge-proof.v0",
+      "alg": "Ed25519",
+      "binding_ref": "binding:vector:1",
+      "wallet_ref": "wallet:é/🚀",
+      "key_ref": "key:vector:1",
+      "subject_ref": "subject:machine:vector",
+      "custody_ref": "custody:public-test-only",
+      "binding_revision": 9007199254740991,
+      "challenge_digest": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "signature": "YbmIQpMsdL6skaKo2jdQId8wwUjh1I9F-X1uKt0_r50gFpJQ1PDDCY3SbwbrrJqoql-w2MCPiPzY0pQ9zD7iAQ"
+    },
+    "wire_utf8": "{\"alg\":\"Ed25519\",\"binding_ref\":\"binding:vector:1\",\"binding_revision\":9007199254740991,\"challenge_digest\":\"sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff\",\"custody_ref\":\"custody:public-test-only\",\"key_ref\":\"key:vector:1\",\"profile\":\"openwallet.challenge-proof.v0\",\"signature\":\"YbmIQpMsdL6skaKo2jdQId8wwUjh1I9F-X1uKt0_r50gFpJQ1PDDCY3SbwbrrJqoql-w2MCPiPzY0pQ9zD7iAQ\",\"subject_ref\":\"subject:machine:vector\",\"wallet_ref\":\"wallet:é/🚀\"}"
+  }
+]
