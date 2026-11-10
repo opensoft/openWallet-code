@@ -30,6 +30,6 @@ jobs:
         with:
           python-version: "3.12"
 
-      - run: pip install pyyaml jsonschema rfc3339-validator pytest
+      - run: pip install -e . pyyaml jsonschema rfc3339-validator pytest
 
       - run: python3 -m pytest tests/ -q
