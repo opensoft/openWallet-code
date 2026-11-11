@@ -100,3 +100,35 @@ def test_unsafe_state_and_database_links_refuse_without_touching_target(tmp_path
     alias.symlink_to(state, target_is_directory=True)
     with pytest.raises(ProofError, match="unsafe-state-directory"):
         BindingRegistry(alias)
+
+
+@pytest.mark.parametrize("case", ["another-subject", "retired-public-key", "moved-custody"])
+def test_public_key_ownership_survives_aliases_and_rotation(tmp_path, case):
+    registry = BindingRegistry(tmp_path / "state")
+    original = sample()
+    registry.register(original, expected_revision=None)
+    if case == "retired-public-key":
+        registry.register(replace(original, key_ref="key:a:rotated",
+                                  public_key=b"n" * 32, revision=2), expected_revision=1)
+    change = {"key_ref": "key:new-alias", "binding_ref": "binding:new-alias", "revision": 3}
+    if case == "moved-custody":
+        change["custody_ref"] = "custody:other"
+        expected = 1
+    else:
+        change["subject_ref"] = "subject:other"
+        expected = None
+    with pytest.raises(ProofError, match="public-key-owner-conflict"):
+        registry.register(replace(original, **change), expected_revision=expected)
+    assert registry.resolve("subject:a", now=1000).revision == (2 if case == "retired-public-key" else 1)
+
+
+def test_historical_cross_owner_state_refuses_on_open(tmp_path):
+    import sqlite3
+    registry = BindingRegistry(tmp_path / "state")
+    original = sample()
+    registry.register(original, expected_revision=None)
+    with sqlite3.connect(registry.path) as database:
+        database.execute("INSERT INTO key_owners VALUES(?,?,?,?)",
+                         ("old:alias", "subject:other", original.public_key.hex(), original.custody_ref))
+    with pytest.raises(ProofError, match="public-key-owner-conflict"):
+        BindingRegistry(registry.directory)

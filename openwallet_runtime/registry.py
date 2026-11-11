@@ -65,8 +65,12 @@ class BindingRegistry:
                 CREATE TABLE IF NOT EXISTS key_owners(
                     key_ref TEXT PRIMARY KEY, subject TEXT NOT NULL,
                     public_key TEXT NOT NULL, custody_ref TEXT NOT NULL);
+                CREATE INDEX IF NOT EXISTS public_key_ownership ON key_owners(public_key);
                 CREATE TABLE IF NOT EXISTS revoked_refs(binding_ref TEXT PRIMARY KEY);
             """)
+            if db.execute("SELECT public_key FROM key_owners GROUP BY public_key "
+                          "HAVING count(DISTINCT subject)>1 OR count(DISTINCT custody_ref)>1 LIMIT 1").fetchone():
+                raise ProofError("public-key-owner-conflict")
 
     @contextmanager
     def _connection(self, *, write=False):
@@ -108,6 +112,10 @@ class BindingRegistry:
             if owner and (owner["subject"], owner["public_key"], owner["custody_ref"]) != (
                     binding.subject_ref, record["public_key"], binding.custody_ref):
                 raise ProofError("key-owner-conflict")
+            if db.execute("SELECT 1 FROM key_owners WHERE public_key=? AND "
+                          "(subject<>? OR custody_ref<>?) LIMIT 1", (
+                              record["public_key"], binding.subject_ref, binding.custody_ref)).fetchone():
+                raise ProofError("public-key-owner-conflict")
             db.execute("INSERT OR IGNORE INTO key_owners VALUES(?,?,?,?)", (
                 binding.key_ref, binding.subject_ref, record["public_key"], binding.custody_ref))
             db.execute("INSERT INTO bindings VALUES(?,?,?,?) ON CONFLICT(subject) DO UPDATE SET "
