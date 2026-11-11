@@ -1,0 +1,25 @@
+# THE BYTES A CLONE SEES ARE THE BYTES THE PINS DESCRIBE.
+#
+# This leg's bytes are pinned by digest. A consumer of openWallet recomputes
+# the sha256 of each of the eight digested contract artifacts from the bytes
+# on disk at `openWallet/code/<path>`, and holds every tracked file under
+# `contracts/` and `scripts/` equal to its blob, hashed raw. Git for Windows'
+# installer default is `core.autocrlf=true`, so a clone there writes CRLF
+# into the worktree; the digest of CRLF bytes is not the digest of the LF
+# bytes that were pinned, and each of those checks goes red for a colleague
+# who did nothing but clone.
+#
+# The assembly root's `.gitattributes` carries this rule for the root's own
+# files and does not reach in here: this leg is checked out by its own
+# repository, which reads its own attributes. So the leg carries the root's
+# one rule itself. `* text=auto eol=lf` normalises text to LF in the object
+# store on check-in and checks it out as LF on every platform, whatever
+# `core.autocrlf` is set to.
+#
+# NO PATH IS LISTED BY NAME, as in the root (openRepoShape #51, ruled by
+# Brett Heap on 2026-09-05). Every file here is text (YAML, Python,
+# Markdown, workflows, the licence), so git's heuristic has nothing to
+# misjudge, and `text=auto` leaves binary detection with git for the files
+# this leg adds later.
+
+* text=auto eol=lf

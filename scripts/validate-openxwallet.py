@@ -307,7 +307,7 @@ if not {"date", "date-time"} <= set(FORMAT_CHECKER.checkers):  # pragma: no cove
     print(
         "ERROR jsonschema is missing its date/date-time format checkers; "
         "install rfc3339-validator (see "
-        "requirements/hermes-runtime-contracts.in) so `format: date` and "
+        ".github/workflows/wallet-validation.yml) so `format: date` and "
         "`format: date-time` are enforced",
         file=sys.stderr,
     )

@@ -4,15 +4,19 @@
 # contract content they check, and the workflows that decide whether they run
 # at all. A pull request that could change what runs cannot clear itself.
 #
-# PRE-CARVE: none of these paths exists yet. They arrive at the carve from
-# opensoft/openXwallet at 90111df262d6f54f7e82651d860adc12345f83f4, and the
-# rules are written first so that the pull request carrying them is already
-# routed. openXwallet's rows for /scripts/verify-contract-pin.py and
-# /contract_pin.yaml have no counterpart here: the vendored envelope they guard
-# stays in openXwallet.
+# CARVED: these paths arrived at the carve from opensoft/openXwallet at
+# 90111df262d6f54f7e82651d860adc12345f83f4 and landed as this repository's #2
+# (merge 72313daa). The assembly root pins this leg at 72313daa (wallet-v1.6,
+# at the time of writing), and post-carve maintenance follows, starting with
+# split-openwallet-neutral-core task 8.2. The rules were written first, so that
+# the pull request carrying them was already routed. openXwallet's rows for
+# /scripts/verify-contract-pin.py and /contract_pin.yaml have no counterpart
+# here: the vendored envelope they guard stays in openXwallet.
 
 # The conformance validator. Its diff from the carve is the declared hunks
-# (a)-(e) and nothing else. A change here is a contract-behaviour change.
+# (a)-(e) plus post-carve maintenance commits, the first being task 8.2's
+# code-leg part, the format-checker refusal's pointer. A change here is a
+# contract-behaviour change, and each such commit is reviewed as one.
 /scripts/validate-openxwallet.py   @brettheap
 
 # The syntax gate.
