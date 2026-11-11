@@ -109,3 +109,28 @@ def test_export_and_admin_routes_and_bad_policy_refuse(service):
     with pytest.raises(ProofError, match="invalid-peer-policy"):
         CustodyApplication(registry, key_directory=app.key_directory,
                            policies={"a" * 64: {"actions": "sign", "subjects": "subject:a"}})
+
+
+def test_untrusted_server_ca_refuses(service):
+    _, _, _, server, _, directory, certs = service
+    untrusted = TLSClient("https://localhost:" + str(server.server_port),
+                          ca_file=certs["unknown"][0], certificate=certs["agent"][0],
+                          private_key=certs["agent"][1])
+    with pytest.raises(ProofError, match="service-unavailable"):
+        RemoteRegistry(untrusted).resolve("subject:a", now=1000)
+
+
+def test_server_hostname_is_checked_even_when_tcp_reaches_the_right_service(service, monkeypatch):
+    import socket
+    _, _, _, server, _, directory, certs = service
+    original = socket.create_connection
+
+    def connect_to_fixture(address, *args, **kwargs):
+        return original(("127.0.0.1", server.server_port), *args, **kwargs)
+
+    monkeypatch.setattr(socket, "create_connection", connect_to_fixture)
+    wrong_name = TLSClient("https://wrong.example.invalid:" + str(server.server_port),
+                           ca_file=directory / "ca.pem", certificate=certs["agent"][0],
+                           private_key=certs["agent"][1])
+    with pytest.raises(ProofError, match="service-unavailable"):
+        RemoteRegistry(wrong_name).resolve("subject:a", now=1000)
