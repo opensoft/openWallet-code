@@ -1,0 +1,14 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "openwallet-runtime"
+version = "0.0.0.dev0"
+description = "Candidate offline openWallet possession-proof primitives"
+requires-python = ">=3.12"
+license = "Apache-2.0"
+dependencies = ["cryptography==50.0.1", "rfc8785==0.1.4"]
+
+[tool.setuptools.packages.find]
+include = ["openwallet_runtime*"]

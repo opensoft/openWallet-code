@@ -1,5 +1,8 @@
 # openWallet-code
 
+Candidate runtime work is described in [runtime-candidate.md](docs/runtime-candidate.md).
+It remains under review and is not an accepted runtime release.
+
 The **code leg** of the `openwallet` project: the implementation and its
 tests. The requirements it implements live in
 [`opensoft/openWallet-spec`](https://github.com/opensoft/openWallet-spec).
