@@ -2,15 +2,42 @@ import base64
 import http.client
 import json
 import ssl
+from dataclasses import replace
 
 import pytest
 import rfc8785
 
 from openwallet_runtime import ProofError, create_proof, verify_proof
 from openwallet_runtime.custody import RemoteRegistry, RemoteSigner, TLSClient, decode_object
-from openwallet_runtime.reference_service import CustodyApplication, ReferenceServer
+from openwallet_runtime.reference_service import CustodyApplication, ReferenceServer, provision_key
 
 DIGEST = "sha256:" + "a" * 64
+
+
+def signing_message(binding):
+    class Capture:
+        def sign(self, message):
+            self.message = message
+            raise ValueError("captured")
+
+    capture = Capture()
+    with pytest.raises(ProofError, match="signer-unavailable"):
+        create_proof(DIGEST, binding, capture, now=1000)
+    return capture.message
+
+
+def assert_peer_refused(service, actor, action, subject):
+    registry, binding, app, _, client, *_ = service
+    if subject != binding.subject_ref:
+        binding = replace(binding, binding_ref="binding:other", wallet_ref="wallet:other",
+                          key_ref="key:other", subject_ref=subject,
+                          public_key=provision_key(app.key_directory, "key:other"))
+        registry.register(binding, expected_revision=None)
+    payload = {"subject_ref": subject}
+    if action == "sign":
+        payload["message"] = base64.urlsafe_b64encode(signing_message(binding)).decode()
+    with pytest.raises(ProofError, match="service-refused"):
+        client(actor)._post("/v0/" + action, payload)
 
 
 def test_actual_mutual_tls_registry_and_opaque_signing(service):
@@ -29,12 +56,22 @@ def test_actual_mutual_tls_registry_and_opaque_signing(service):
     ("agent", "resolve", "subject:other"), ("agent", "sign", "subject:other"),
 ])
 def test_peer_action_and_subject_isolation(service, actor, action, subject):
-    _, _, _, _, client, *_ = service
-    payload = {"subject_ref": subject}
-    if action == "sign":
-        payload["message"] = base64.urlsafe_b64encode(b"anything").decode()
-    with pytest.raises(ProofError, match="service-refused"):
-        client(actor)._post("/v0/" + action, payload)
+    assert_peer_refused(service, actor, action, subject)
+
+
+@pytest.mark.parametrize("actor,action,subject", [
+    ("verifier", "sign", "subject:a"),
+    ("agent", "resolve", "subject:other"), ("agent", "sign", "subject:other"),
+])
+def test_isolation_probe_detects_accidental_policy_grant(service, actor, action, subject):
+    _, _, app, _, _, _, certs = service
+    policy = app.policies[certs[actor][2]]
+    if action not in policy["actions"]:
+        policy["actions"].append(action)
+    if subject not in policy["subjects"]:
+        policy["subjects"].append(subject)
+    with pytest.raises(pytest.fail.Exception, match="DID NOT RAISE"):
+        assert_peer_refused(service, actor, action, subject)
 
 
 def test_current_registry_revocation_blocks_resolve_and_sign(service):
