@@ -11,6 +11,10 @@
 # `d` is far too generic a property name to blocklist on its own — plenty of
 # innocent records could carry one — but alongside `kty` it is unambiguous,
 # which is why the check keys on the pair rather than on the letter.
+# Values below are deliberately invalid (including non-base64url !).
+# They preserve the forbidden kty/d pair without carrying private key bytes.
+# The historical example matched the public RFC 8037 Appendix A vector;
+# see docs/quality/sonar73-provenance.md for the safe provenance record.
 schema_version: 1
 kind: xfactory_wallet_record
 wallet_id: wal-agent-jwk-0009
@@ -24,5 +28,5 @@ key_reference:
 custody:
   model: holder_readable
   registry_version: 1
-  declared_by: '{"kty":"OKP","crv":"Ed25519","x":"11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo","d":"nWGxne_9WmC6hEr0kuwsxERJxWl7MmkZcDusAxyuf2A"}'
+  declared_by: '{"kty":"OKP","crv":"Ed25519","x":"SYNTHETIC-PUBLIC-PLACEHOLDER!","d":"SYNTHETIC-PRIVATE-PLACEHOLDER!"}'
 state: active
