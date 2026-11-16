@@ -31,6 +31,6 @@ jobs:
         with:
           python-version: "3.12"
 
-      - run: pip install -e . pyyaml jsonschema rfc3339-validator pytest
+      - run: "pip install --only-binary :all: --require-hashes -r requirements-ci.lock"
 
       - run: python3 -m pytest tests/ -q

@@ -40,8 +40,10 @@ jobs:
         with:
           python-version: "3.12"
 
-      - run: pip install pyyaml jsonschema rfc3339-validator
+      - run: "pip install --only-binary :all: --require-hashes -r requirements-ci.lock"
 
       - run: python3 scripts/wallet-yaml-syntax-gate.py .
 
       - run: python3 scripts/validate-openxwallet.py .
+
+      - run: python3 scripts/validate-openxwallet.py . --strict

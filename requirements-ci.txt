@@ -1,0 +1,7 @@
+# Direct runtime and validation requirements; full wheel closure in requirements-ci.lock.
+cryptography==50.0.1
+rfc8785==0.1.4
+pyyaml==6.0.3
+jsonschema==4.26.0
+rfc3339-validator==0.1.4
+pytest==9.1.1

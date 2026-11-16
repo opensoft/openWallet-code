@@ -77,3 +77,10 @@ here. The approval vocabulary is one declared binding that the caller supplies.
 
 See [`AGENTS.md`](AGENTS.md) and [`CLAUDE.md`](CLAUDE.md). Both point at the
 shared OpenSpec/Speckit protocol, which runs from the assembly root.
+
+Sonar maintenance provenance: [issue #73 fixture evidence](docs/quality/sonar73-provenance.md).
+
+The ordinary CI jobs install the reviewed complete Python 3.12/Linux wheel
+closure in requirements-ci.lock with --only-binary :all: --require-hashes.
+Tests execute the checked-out openwallet_runtime source directly; no editable
+installation or project build backend runs. Direct inputs are requirements-ci.txt.
