@@ -1,6 +1,7 @@
 """Isolated reference transport, not a hardened public hosting service."""
 import argparse
 import base64
+from contextlib import ExitStack
 import hashlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import os
@@ -165,13 +166,62 @@ def server_context(*, ca_file, certificate, private_key):
     return context
 
 
-def main():
+def read_service_config(path):
+    """Admit one bounded operator config without following operand links."""
+    configured = os.environ.get("OPENWALLET_REFERENCE_CONFIG_ROOT")
+    try:
+        if configured is not None and not configured.strip():
+            raise ProofError("invalid-service-data")
+        root = (Path.cwd() if configured is None else Path(configured).expanduser()).resolve(strict=True)
+        if root == Path(root.anchor) or not root.is_dir():
+            raise ProofError("invalid-service-data")
+        selected = Path(os.path.abspath(os.path.expanduser(os.fspath(path))))
+        if not selected.is_relative_to(root):
+            raise ProofError("invalid-service-data")
+        relative = selected.relative_to(root)
+        if not relative.parts:
+            raise ProofError("invalid-service-data")
+        with ExitStack() as handles:
+            directory = os.open(root.anchor, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+            handles.callback(os.close, directory)
+            for component in root.parts[1:]:
+                directory = os.open(component, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+                                    dir_fd=directory)
+                handles.callback(os.close, directory)
+            for component in relative.parts[:-1]:
+                directory = os.open(component, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+                                    dir_fd=directory)
+                handles.callback(os.close, directory)
+            descriptor = os.open(relative.parts[-1], os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW,
+                                 dir_fd=directory)
+            handles.callback(os.close, descriptor)
+            info = os.fstat(descriptor)
+            if (not stat.S_ISREG(info.st_mode) or info.st_nlink != 1
+                    or info.st_uid not in (0, os.geteuid()) or info.st_mode & 0o022):
+                raise ProofError("invalid-service-data")
+            payload = bytearray()
+            while len(payload) < MAX_BODY + 1:
+                chunk = os.read(descriptor, MAX_BODY + 1 - len(payload))
+                if not chunk:
+                    break
+                payload.extend(chunk)
+            if len(payload) > MAX_BODY:
+                raise ProofError("invalid-service-data")
+        return decode_object(bytes(payload))
+    except (OSError, RuntimeError, TypeError, ValueError):
+        raise ProofError("invalid-service-data") from None
+
+
+def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", required=True)
     parser.add_argument("--listen", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8443)
-    args = parser.parse_args()
-    config = decode_object(Path(args.config).read_bytes())
+    args = parser.parse_args(argv)
+    try:
+        config = read_service_config(args.config)
+    except ProofError:
+        parser.exit(2, "reference-service: invalid-service-data\n")
     app = CustodyApplication(BindingRegistry(config["registry_directory"]),
                             key_directory=config["key_directory"], policies=config["policies"])
     context = server_context(ca_file=config["ca_file"], certificate=config["certificate"], private_key=config["private_key"])

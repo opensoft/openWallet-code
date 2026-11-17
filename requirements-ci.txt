@@ -1,4 +1,4 @@
-# Direct runtime and validation requirements; full wheel closure in requirements-ci.lock.
+# Direct runtime and validation requirements; full wheel closure in requirements.txt.
 cryptography==50.0.1
 rfc8785==0.1.4
 pyyaml==6.0.3
