@@ -169,3 +169,32 @@ def test_optimized_python_still_refuses_escaped_config_before_state_creation(tmp
     assert result.returncode == 2
     assert result.stderr == "reference-service: invalid-service-data\n"
     assert not state.exists()
+
+
+def test_config_root_ancestor_swap_refuses_before_reading_outside_file(tmp_path, monkeypatch):
+    ancestor = tmp_path / "selected"
+    root = ancestor / "root"
+    root.mkdir(parents=True)
+    selected = config(root / "service.json", {"origin": "inside"})
+    outside = tmp_path / "outside"
+    (outside / "root").mkdir(parents=True)
+    config(outside / "root" / "service.json", {"origin": "outside"})
+    monkeypatch.setenv("OPENWALLET_REFERENCE_CONFIG_ROOT", str(root))
+    original = os.open
+    swapped = False
+    def race(path, flags, *args, **kwargs):
+        nonlocal swapped
+        if not swapped and "dir_fd" not in kwargs and flags & os.O_DIRECTORY:
+            swapped = True
+            ancestor.rename(tmp_path / "original-selected")
+            ancestor.symlink_to(outside, target_is_directory=True)
+        return original(path, flags, *args, **kwargs)
+    def forbidden(payload):
+        raise AssertionError("root replacement reached configuration bytes")
+    monkeypatch.setattr(service.os, "open", race)
+    monkeypatch.setattr(service, "decode_object", forbidden)
+    before = len(tuple(Path("/proc/self/fd").iterdir()))
+    with pytest.raises(ProofError, match="invalid-service-data"):
+        service.read_service_config(selected)
+    assert swapped
+    assert len(tuple(Path("/proc/self/fd").iterdir())) == before

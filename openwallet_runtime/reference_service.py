@@ -182,8 +182,12 @@ def read_service_config(path):
         if not relative.parts:
             raise ProofError("invalid-service-data")
         with ExitStack() as handles:
-            directory = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+            directory = os.open(root.anchor, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
             handles.callback(os.close, directory)
+            for component in root.parts[1:]:
+                directory = os.open(component, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+                                    dir_fd=directory)
+                handles.callback(os.close, directory)
             for component in relative.parts[:-1]:
                 directory = os.open(component, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
                                     dir_fd=directory)
