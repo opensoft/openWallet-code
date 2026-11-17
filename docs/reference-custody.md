@@ -32,3 +32,16 @@ Run the code-leg suite with `python -m pytest tests/ -q`. It uses real TLS
 and crypto with ephemeral local keys. Cross-container source qualification
 belongs to the paired openMFA assembly integration gate and records its exact
 source bindings and cleanup separately from leg CI or product release.
+
+## Operator configuration read boundary
+
+The CLI admits --config only below the current invocation directory by default.
+For an existing external location, set OPENWALLET_REFERENCE_CONFIG_ROOT to its
+bounded directory independently of the argument. The operand cannot choose that
+root. Empty/root-filesystem/nonexistent root selections refuse. Config files
+must be regular, singly linked, owned by the current operator or root, and not
+group/world writable. Reads do not follow leaf or intermediate links and consume
+at most the existing 8,192-byte document bound plus one byte before refusing.
+No registry, TLS/key loading or listener is constructed for a refused config.
+Paths inside accepted JSON still resolve from process cwd; they are not rebased
+to the config directory. This adds no network or production activation authority.

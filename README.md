@@ -81,6 +81,12 @@ shared OpenSpec/Speckit protocol, which runs from the assembly root.
 Sonar maintenance provenance: [issue #73 fixture evidence](docs/quality/sonar73-provenance.md).
 
 The ordinary CI jobs install the reviewed complete Python 3.12/Linux wheel
-closure in requirements-ci.lock with --only-binary :all: --require-hashes.
+closure in requirements.txt with --only-binary :all: --require-hashes.
 Tests execute the checked-out openwallet_runtime source directly; no editable
 installation or project build backend runs. Direct inputs are requirements-ci.txt.
+
+The former requirements-ci.lock remains a compatibility include of that exact
+canonical closure. No package version, wheel hash or build-backend behavior moves.
+Reference service CLI configuration is bounded to the invocation directory;
+operators using an external config set OPENWALLET_REFERENCE_CONFIG_ROOT separately.
+See [the reference custody guide](docs/reference-custody.md) for the read boundary.

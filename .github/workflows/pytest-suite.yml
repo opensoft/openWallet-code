@@ -31,6 +31,6 @@ jobs:
         with:
           python-version: "3.12"
 
-      - run: "pip install --only-binary :all: --require-hashes -r requirements-ci.lock"
+      - run: "pip install --only-binary :all: --require-hashes -r requirements.txt"
 
       - run: python3 -m pytest tests/ -q
