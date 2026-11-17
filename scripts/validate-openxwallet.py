@@ -644,31 +644,34 @@ class Context:
         never as a harness crash that discards every other file's findings."""
         kind = doc.get("kind")
         if kind == "xfactory_wallet_record":
-            wid = doc.get("wallet_id")
-            if isinstance(wid, str) and wid:
-                if wid in self.wallets:
-                    self.duplicate_ids.add((kind, wid))
-                self.wallets[wid] = doc
-                # EVERY DECLARED KEY, not only the primary one
-                # (add-multi-key-wallets, design D4): rule (r) resolves a
-                # presenting key against the wallet's declared SET, and a set
-                # the index does not carry is a set the binding cannot see.
-                for key_id in declared_key_ids(doc):
-                    holders = self.wallets_by_key.setdefault(key_id, [])
-                    if wid not in holders:
-                        holders.append(wid)
+            self._index_wallet(kind, doc)
         elif kind == "xfactory_wallet_grant":
-            gid = doc.get("grant_id")
-            if isinstance(gid, str) and gid:
-                if gid in self.grants:
-                    self.duplicate_ids.add((kind, gid))
-                self.grants[gid] = doc
+            self._index_identified_record(kind, doc, "grant_id", "grants")
         elif kind == "xfactory_wallet_distinct_holder_constraint":
-            cid = doc.get("constraint_id")
-            if isinstance(cid, str) and cid:
-                if cid in self.constraints:
-                    self.duplicate_ids.add((kind, cid))
-                self.constraints[cid] = doc
+            self._index_identified_record(kind, doc, "constraint_id", "constraints")
+
+    def _index_wallet(self, kind, doc):
+        wid = doc.get("wallet_id")
+        if isinstance(wid, str) and wid:
+            if wid in self.wallets:
+                self.duplicate_ids.add((kind, wid))
+            self.wallets[wid] = doc
+            # EVERY DECLARED KEY, not only the primary one
+            # (add-multi-key-wallets, design D4): rule (r) resolves a
+            # presenting key against the wallet's declared SET, and a set
+            # the index does not carry is a set the binding cannot see.
+            for key_id in declared_key_ids(doc):
+                holders = self.wallets_by_key.setdefault(key_id, [])
+                if wid not in holders:
+                    holders.append(wid)
+
+    def _index_identified_record(self, kind, doc, id_key, table_name):
+        record_id = doc.get(id_key)
+        if isinstance(record_id, str) and record_id:
+            records = getattr(self, table_name)
+            if record_id in records:
+                self.duplicate_ids.add((kind, record_id))
+            records[record_id] = doc
 
     def rank(self, tier: str) -> int | None:
         return self.tier_rank.get(tier) if isinstance(tier, str) else None
@@ -689,100 +692,114 @@ class Context:
 
 # --------------------------- rule (a): key material ---------------------------
 
+def _check_jwk_key_material(f, label, node, path):
+    # A JWK carries its private exponent under the single letter `d`, which
+    # is far too generic a property name to blocklist on its own — but
+    # alongside `kty` it is unambiguous, and it is how a key most plausibly
+    # arrives as structured data rather than as armored text.
+    if "kty" in node and "d" in node:
+        f.error("key-material-embedded",
+                f"{label}: object at {path or '<root>'!r} is a JWK carrying "
+                f"its private exponent 'd'; a wallet references a key and "
+                f"never carries one")
+
+
+def _check_key_name_material(f, label, name, here):
+    lname = str(name).lower()
+    if lname not in _KEY_NAME_ALLOW and any(
+            tok in lname for tok in _KEY_NAME_TOKENS):
+        f.error("key-material-embedded",
+                f"{label}: property {here!r} is key-material-shaped; a "
+                f"wallet record references a key and never carries one")
+
+def _check_string_key_material(f, label, node, path):
+    if _KEY_VALUE_RE.search(node):
+        f.error("key-material-embedded",
+                f"{label}: value at {path!r} contains a private key block; "
+                f"the property is conformant but the VALUE is key material")
+    elif _JWK_PRIVATE_RE.search(node):
+        f.error("key-material-embedded",
+                f"{label}: value at {path!r} is a serialized JWK carrying "
+                f"its private exponent 'd'; every object in this family is "
+                f"closed, so a JWK can only arrive as a STRING — which is "
+                f"exactly why the value scan has to look for one")
+
+
 def check_no_key_material(f: Findings, label: str, node: Any,
                           path: str = "") -> None:
     if isinstance(node, dict):
-        # A JWK carries its private exponent under the single letter `d`, which
-        # is far too generic a property name to blocklist on its own — but
-        # alongside `kty` it is unambiguous, and it is how a key most plausibly
-        # arrives as structured data rather than as armored text.
-        if "kty" in node and "d" in node:
-            f.error("key-material-embedded",
-                    f"{label}: object at {path or '<root>'!r} is a JWK carrying "
-                    f"its private exponent 'd'; a wallet references a key and "
-                    f"never carries one")
+        _check_jwk_key_material(f, label, node, path)
         for name, value in node.items():
             here = f"{path}.{name}" if path else str(name)
-            lname = str(name).lower()
-            if lname not in _KEY_NAME_ALLOW and any(
-                    tok in lname for tok in _KEY_NAME_TOKENS):
-                f.error("key-material-embedded",
-                        f"{label}: property {here!r} is key-material-shaped; a "
-                        f"wallet record references a key and never carries one")
+            _check_key_name_material(f, label, name, here)
             check_no_key_material(f, label, value, here)
     elif isinstance(node, list):
         for i, item in enumerate(node):
             check_no_key_material(f, label, item, f"{path}[{i}]")
     elif isinstance(node, str):
-        if _KEY_VALUE_RE.search(node):
-            f.error("key-material-embedded",
-                    f"{label}: value at {path!r} contains a private key block; "
-                    f"the property is conformant but the VALUE is key material")
-        elif _JWK_PRIVATE_RE.search(node):
-            f.error("key-material-embedded",
-                    f"{label}: value at {path!r} is a serialized JWK carrying "
-                    f"its private exponent 'd'; every object in this family is "
-                    f"closed, so a JWK can only arrive as a STRING — which is "
-                    f"exactly why the value scan has to look for one")
-
+        _check_string_key_material(f, label, node, path)
 
 # --------------------------- rules (b)-(d): the custody registry ---------------------------
 
-def check_custody_registry(f: Findings, label: str, doc: dict) -> None:
-    models = _sequence(doc.get("custody_models"))
-    # Ranks restricted to ints: a malformed rank would otherwise reach the
-    # collapse comparison and crash the run instead of reporting the
-    # registry's own schema finding. A tier dropped here makes ceilings
-    # naming it 'unknown', which fails closed alongside that finding.
-    tiers = {t.get("id"): t.get("rank") for t in _sequence(doc.get("authority_tiers"))
-             if isinstance(t, dict) and _hashable(t.get("id"))
-             and isinstance(t.get("rank"), int)}
-    # Rule (c) keys on the TOP RANK rather than on the id `act_unsupervised`.
-    # Naming the tier would make the rule depend on a string a registry is free
-    # to choose, so renaming the top tier would silently disable the check —
-    # the same "it all validates cleanly" failure this family exists to refuse.
-    top_rank = max((r for r in tiers.values() if isinstance(r, int)), default=None)
+def _check_custody_member(f, label, member, tiers, top_rank, seen_ids):
+    if not isinstance(member, dict):
+        return
+    mid = member.get("id") if isinstance(member.get("id"), str) else "<unnamed>"
+    if mid in seen_ids:
+        f.error("custody-duplicate-member",
+                f"{label}: custody model {mid!r} declared twice")
+    seen_ids.add(mid)
 
-    seen_ids: set[str] = set()
-    for member in models:
-        if not isinstance(member, dict):
-            continue
-        mid = member.get("id") if isinstance(member.get("id"), str) else "<unnamed>"
-        if mid in seen_ids:
-            f.error("custody-duplicate-member",
-                    f"{label}: custody model {mid!r} declared twice")
-        seen_ids.add(mid)
+    readable = member.get("key_readable_by_holder_execution_context")
+    per_use = member.get(
+        "use_requires_authorization_outside_holder_execution_context")
+    declared = member.get("evidences")
 
-        readable = member.get("key_readable_by_holder_execution_context")
-        per_use = member.get(
-            "use_requires_authorization_outside_holder_execution_context")
-        declared = member.get("evidences")
+    # (b) the derivation, enforced rather than trusted.
+    derived = "holder" if (readable is False and per_use is True) else "environment"
+    if declared != derived:
+        f.error("custody-evidences-derivation",
+                f"{label}: custody model {mid!r} declares evidences="
+                f"{declared!r} but its properties derive {derived!r} "
+                f"(readable={readable!r}, per_use_authorization={per_use!r}). "
+                f"`evidences` is derived, never asserted: a key readable by "
+                f"the holder's own execution context evidences the "
+                f"ENVIRONMENT, and only isolation WITH an authorization that "
+                f"context cannot supply evidences the HOLDER")
 
-        # (b) the derivation, enforced rather than trusted.
-        derived = "holder" if (readable is False and per_use is True) else "environment"
-        if declared != derived:
-            f.error("custody-evidences-derivation",
-                    f"{label}: custody model {mid!r} declares evidences="
-                    f"{declared!r} but its properties derive {derived!r} "
-                    f"(readable={readable!r}, per_use_authorization={per_use!r}). "
-                    f"`evidences` is derived, never asserted: a key readable by "
-                    f"the holder's own execution context evidences the "
-                    f"ENVIRONMENT, and only isolation WITH an authorization that "
-                    f"context cannot supply evidences the HOLDER")
+    # (c) the top tier must be earned.
+    ceiling = member.get("authority_ceiling")
+    if not isinstance(ceiling, str) or ceiling not in tiers:
+        f.error("custody-ceiling-unknown",
+                f"{label}: custody model {mid!r} caps at {ceiling!r}, which "
+                f"is not a declared authority tier")
+    elif (top_rank is not None and tiers.get(ceiling) == top_rank
+            and declared != "holder"):
+        f.error("custody-ceiling-unearned",
+                f"{label}: custody model {mid!r} caps at {ceiling!r}, the "
+                f"HIGHEST tier this ladder declares, while evidencing "
+                f"{declared!r}; unsupervised irreversible action requires "
+                f"evidence that the HOLDER acted")
 
-        # (c) the top tier must be earned.
-        ceiling = member.get("authority_ceiling")
-        if not isinstance(ceiling, str) or ceiling not in tiers:
-            f.error("custody-ceiling-unknown",
-                    f"{label}: custody model {mid!r} caps at {ceiling!r}, which "
-                    f"is not a declared authority tier")
-        elif (top_rank is not None and tiers.get(ceiling) == top_rank
-                and declared != "holder"):
-            f.error("custody-ceiling-unearned",
-                    f"{label}: custody model {mid!r} caps at {ceiling!r}, the "
-                    f"HIGHEST tier this ladder declares, while evidencing "
-                    f"{declared!r}; unsupervised irreversible action requires "
-                    f"evidence that the HOLDER acted")
+
+def _check_custody_rank_pair(f, label, env_member, holder_member, e_rank, tiers):
+    if env_member is holder_member:
+        return  # a self-comparison carries no information
+    h_rank = tiers.get(holder_member.get("authority_ceiling")) \
+        if _hashable(holder_member.get("authority_ceiling")) else None
+    if e_rank is None or h_rank is None:
+        return
+    if e_rank >= h_rank:
+        f.error("custody-collapse",
+                f"{label}: custody model {env_member.get('id')!r} "
+                f"evidences only the ENVIRONMENT yet caps at or above "
+                f"{holder_member.get('id')!r}, which evidences the "
+                f"HOLDER; the weaker case can claim the stronger "
+                f"case's authority and the distinction the ruling drew "
+                f"is lost")
+
+
+def _check_custody_collapse(f, label, models, tiers):
 
     # (d) the collapse check, stated directly.
     #
@@ -801,20 +818,7 @@ def check_custody_registry(f: Findings, label: str, doc: dict) -> None:
         e_rank = tiers.get(env_member.get("authority_ceiling")) \
             if _hashable(env_member.get("authority_ceiling")) else None
         for holder_member in holder_members:
-            if env_member is holder_member:
-                continue  # a self-comparison carries no information
-            h_rank = tiers.get(holder_member.get("authority_ceiling")) \
-                if _hashable(holder_member.get("authority_ceiling")) else None
-            if e_rank is None or h_rank is None:
-                continue
-            if e_rank >= h_rank:
-                f.error("custody-collapse",
-                        f"{label}: custody model {env_member.get('id')!r} "
-                        f"evidences only the ENVIRONMENT yet caps at or above "
-                        f"{holder_member.get('id')!r}, which evidences the "
-                        f"HOLDER; the weaker case can claim the stronger "
-                        f"case's authority and the distinction the ruling drew "
-                        f"is lost")
+            _check_custody_rank_pair(f, label, env_member, holder_member, e_rank, tiers)
 
     if not holder_members:
         f.error("custody-holder-tier-absent",
@@ -828,7 +832,92 @@ def check_custody_registry(f: Findings, label: str, doc: dict) -> None:
                 f"authority to")
 
 
+def check_custody_registry(f: Findings, label: str, doc: dict) -> None:
+    models = _sequence(doc.get("custody_models"))
+    # Ranks restricted to ints: a malformed rank would otherwise reach the
+    # collapse comparison and crash the run instead of reporting the
+    # registry's own schema finding. A tier dropped here makes ceilings
+    # naming it 'unknown', which fails closed alongside that finding.
+    tiers = {t.get("id"): t.get("rank") for t in _sequence(doc.get("authority_tiers"))
+             if isinstance(t, dict) and _hashable(t.get("id"))
+             and isinstance(t.get("rank"), int)}
+    # Rule (c) keys on the TOP RANK rather than on the id `act_unsupervised`.
+    # Naming the tier would make the rule depend on a string a registry is free
+    # to choose, so renaming the top tier would silently disable the check —
+    # the same "it all validates cleanly" failure this family exists to refuse.
+    top_rank = max((r for r in tiers.values() if isinstance(r, int)), default=None)
+
+    seen_ids: set[str] = set()
+    for member in models:
+        _check_custody_member(f, label, member, tiers, top_rank, seen_ids)
+
+    _check_custody_collapse(f, label, models, tiers)
+
 # --------------------------- the wallet record ---------------------------
+
+def _check_declared_key_fingerprint(f, label, key_id, entry, where):
+    # THE FINGERPRINT RECOMPUTES where the entry declares its public half.
+    # `public_key_multibase` is optional, so this is conditional — but
+    # where it IS declared, a fingerprint that does not recompute is two
+    # claims about one key that cannot both be true, and the register
+    # reader beside this one already recomputes the same value from the
+    # same key's other encoding.
+    multibase = entry.get("public_key_multibase")
+    fingerprint = entry.get("key_fingerprint")
+    if multibase is not None and isinstance(fingerprint, str):
+        raw = decode_public_key_multibase(multibase)
+        if raw is None:
+            f.error("declared-key-fingerprint-mismatch",
+                    f"{label}: {where} declares public_key_multibase "
+                    f"{multibase!r} for key {key_id!r}, which does not "
+                    f"decode as base58btc carrying the ed25519 multicodec "
+                    f"prefix and 32 raw bytes; the fingerprint beside it "
+                    f"cannot be checked, and an unverifiable public half is "
+                    f"refused rather than passed over")
+        else:
+            recomputed = fingerprint_of_public_key(raw)
+            if recomputed != fingerprint:
+                f.error("declared-key-fingerprint-mismatch",
+                        f"{label}: {where} declares key_fingerprint "
+                        f"{fingerprint!r} for key {key_id!r}, but its own "
+                        f"public_key_multibase recomputes to "
+                        f"{recomputed!r}; a fingerprint and the public half "
+                        f"beside it are two claims about ONE key and cannot "
+                        f"both be true")
+
+
+def _check_declared_key_custody(f, label, key_id, custody, where, ctx,
+                                wallet_model, wallet_member, wallet_ceiling_rank):
+    model = custody.get("model")
+    if not model:
+        # An absent model is the schema's finding to report (`custody` is
+        # required on a `keys:` entry); reporting it again here would
+        # double-count one defect under a cross-shape code.
+        return
+    member = ctx.custody.get(model) if isinstance(model, str) else None
+    if member is None:
+        f.error("custody-model-unknown",
+                f"{label}: {where} declares custody model {model!r} for "
+                f"key {key_id!r}, which is not a member of the closed "
+                f"registry ({sorted(ctx.custody)}); custody is declared "
+                f"FROM A CLOSED SET, and an unrecognised model is refused "
+                f"rather than treated as uncapped")
+        return
+    key_ceiling = member.get("authority_ceiling")
+    key_rank = ctx.rank(key_ceiling)
+    if (key_rank is not None and wallet_ceiling_rank is not None
+            and key_rank > wallet_ceiling_rank):
+        f.error("declared-key-raises-authority",
+                f"{label}: {where} declares key {key_id!r} under custody "
+                f"{model!r}, whose ceiling {key_ceiling!r} outranks the "
+                f"wallet's own ceiling "
+                f"{wallet_member.get('authority_ceiling')!r} (custody "
+                f"{wallet_model!r}); a declared key PRESENTS this wallet's "
+                f"authority and is never a source of more of it, so "
+                f"raising authority stays a question about the wallet's "
+                f"custody rather than about adding a stronger key beside "
+                f"it")
+
 
 def check_wallet_record(f: Findings, label: str, doc: dict, ctx: Context) -> None:
     """The custody model a wallet DECLARES is where the closed set actually
@@ -892,63 +981,9 @@ def check_wallet_record(f: Findings, label: str, doc: dict, ctx: Context) -> Non
     for key_id, entry, custody, where in key_set:
         if where == "key_reference":
             continue
-        # THE FINGERPRINT RECOMPUTES where the entry declares its public half.
-        # `public_key_multibase` is optional, so this is conditional — but
-        # where it IS declared, a fingerprint that does not recompute is two
-        # claims about one key that cannot both be true, and the register
-        # reader beside this one already recomputes the same value from the
-        # same key's other encoding.
-        multibase = entry.get("public_key_multibase")
-        fingerprint = entry.get("key_fingerprint")
-        if multibase is not None and isinstance(fingerprint, str):
-            raw = decode_public_key_multibase(multibase)
-            if raw is None:
-                f.error("declared-key-fingerprint-mismatch",
-                        f"{label}: {where} declares public_key_multibase "
-                        f"{multibase!r} for key {key_id!r}, which does not "
-                        f"decode as base58btc carrying the ed25519 multicodec "
-                        f"prefix and 32 raw bytes; the fingerprint beside it "
-                        f"cannot be checked, and an unverifiable public half is "
-                        f"refused rather than passed over")
-            else:
-                recomputed = fingerprint_of_public_key(raw)
-                if recomputed != fingerprint:
-                    f.error("declared-key-fingerprint-mismatch",
-                            f"{label}: {where} declares key_fingerprint "
-                            f"{fingerprint!r} for key {key_id!r}, but its own "
-                            f"public_key_multibase recomputes to "
-                            f"{recomputed!r}; a fingerprint and the public half "
-                            f"beside it are two claims about ONE key and cannot "
-                            f"both be true")
-        model = custody.get("model")
-        if not model:
-            # An absent model is the schema's finding to report (`custody` is
-            # required on a `keys:` entry); reporting it again here would
-            # double-count one defect under a cross-shape code.
-            continue
-        member = ctx.custody.get(model) if isinstance(model, str) else None
-        if member is None:
-            f.error("custody-model-unknown",
-                    f"{label}: {where} declares custody model {model!r} for "
-                    f"key {key_id!r}, which is not a member of the closed "
-                    f"registry ({sorted(ctx.custody)}); custody is declared "
-                    f"FROM A CLOSED SET, and an unrecognised model is refused "
-                    f"rather than treated as uncapped")
-            continue
-        key_ceiling = member.get("authority_ceiling")
-        key_rank = ctx.rank(key_ceiling)
-        if (key_rank is not None and wallet_ceiling_rank is not None
-                and key_rank > wallet_ceiling_rank):
-            f.error("declared-key-raises-authority",
-                    f"{label}: {where} declares key {key_id!r} under custody "
-                    f"{model!r}, whose ceiling {key_ceiling!r} outranks the "
-                    f"wallet's own ceiling "
-                    f"{wallet_member.get('authority_ceiling')!r} (custody "
-                    f"{wallet_model!r}); a declared key PRESENTS this wallet's "
-                    f"authority and is never a source of more of it, so "
-                    f"raising authority stays a question about the wallet's "
-                    f"custody rather than about adding a stronger key beside "
-                    f"it")
+        _check_declared_key_fingerprint(f, label, key_id, entry, where)
+        _check_declared_key_custody(f, label, key_id, custody, where, ctx,
+                                   wallet_model, wallet_member, wallet_ceiling_rank)
 
     # A NOTE (never a warning: `report()` reds a `--strict` run on warnings and
     # a live consumer runs `--strict`). Emitted only for a wallet that actually
@@ -962,20 +997,7 @@ def check_wallet_record(f: Findings, label: str, doc: dict, ctx: Context) -> Non
 
 # --------------------------- rules (e)-(h): grants ---------------------------
 
-def check_grant(f: Findings, label: str, doc: dict, ctx: Context) -> None:
-    scope = _mapping(doc.get("scope"))
-    tier = scope.get("authority_tier")
-    tier_rank = ctx.rank(tier)
-    if tier_rank is None:
-        f.error("authority-tier-unknown",
-                f"{label}: scope names authority tier {tier!r}, which the "
-                f"custody registry does not declare")
-
-    # The declared extension point for grant rules (RULED Q1): run after the
-    # tier lookup and before rule (e). EMPTY here.
-    for rule in GRANT_RULES:
-        rule(f, label, doc, ctx)
-
+def _check_grant_custody_ceiling(f, label, doc, ctx, tier, tier_rank):
     # (e) custody caps authority.
     wallet_ref = _mapping(doc.get("audience")).get("wallet_ref")
     resolved = ctx.ceiling_for_wallet(wallet_ref) if wallet_ref else None
@@ -1002,6 +1024,83 @@ def check_grant(f: Findings, label: str, doc: dict, ctx: Context) -> None:
                     f"whose ceiling is {ceiling!r}. Raising authority requires "
                     f"changing custody, not asserting trust")
 
+
+def _check_attenuated_acts_and_objects(f, label, scope, pscope, parent_ref):
+    child_acts = _hashable_set(scope.get("acts"))
+    parent_acts = _hashable_set(pscope.get("acts"))
+    widened = sorted(child_acts - parent_acts, key=repr)
+    if widened:
+        f.error("attenuation-widened",
+                f"{label}: derived grant adds acts {widened} its parent "
+                f"{parent_ref!r} does not confer; derivation may narrow "
+                f"and may never widen")
+    parent_objects = pscope.get("objects")
+    child_objects = scope.get("objects")
+    if parent_objects is not None:
+        if child_objects is None:
+            f.error("attenuation-widened",
+                    f"{label}: parent {parent_ref!r} narrows to objects "
+                    f"{sorted(parent_objects)} and the derived grant "
+                    f"drops the narrowing entirely")
+        else:
+            extra = sorted(_hashable_set(child_objects)
+                           - _hashable_set(parent_objects), key=repr)
+            if extra:
+                f.error("attenuation-widened",
+                        f"{label}: derived grant adds objects {extra} "
+                        f"outside its parent {parent_ref!r}")
+
+
+def _check_attenuated_tier_and_expiry(f, label, doc, ctx, parent, parent_ref,
+                                     pscope, tier, tier_rank):
+    parent_rank = ctx.rank(pscope.get("authority_tier"))
+    if tier_rank is not None and parent_rank is not None and tier_rank > parent_rank:
+        f.error("attenuation-widened",
+                f"{label}: derived grant raises authority tier to "
+                f"{tier!r} above its parent {parent_ref!r} at "
+                f"{pscope.get('authority_tier')!r}")
+    child_exp = parse_time(doc.get("expires_at"))
+    parent_exp = parse_time(parent.get("expires_at"))
+    if child_exp and parent_exp and child_exp > parent_exp:
+        f.error("attenuation-widened",
+                f"{label}: derived grant expires {doc.get('expires_at')} "
+                f"after its parent {parent_ref!r} at "
+                f"{parent.get('expires_at')}; lifetime may only shorten")
+
+
+def _check_attenuated_posture(f, label, doc, scope, parent, parent_ref, pscope):
+    # Posture is part of scope, so attenuation must cover it. Rule (h)
+    # declares posture and tier ONE vocabulary; attenuating only the
+    # tier would let a derivation keep its parent's tier and quietly
+    # waive the approval that made that tier survivable.
+    pposture = _mapping(pscope.get("approval_posture"))
+    cposture = _mapping(scope.get("approval_posture"))
+    if (pposture.get("hermes_approval_required_before_apply") is True
+            and cposture.get("hermes_approval_required_before_apply") is False):
+        f.error("attenuation-widened",
+                f"{label}: derived grant waives approval before apply "
+                f"where its parent {parent_ref!r} requires it")
+    if (pposture.get("authority_agents_may_approve") is False
+            and cposture.get("authority_agents_may_approve") is True):
+        f.error("attenuation-widened",
+                f"{label}: derived grant permits agent approval where "
+                f"its parent {parent_ref!r} withholds it")
+    dropped = sorted(_hashable_set(pposture.get("human_escalation_required_for"))
+                     - _hashable_set(cposture.get("human_escalation_required_for")), key=repr)
+    if dropped:
+        f.error("attenuation-widened",
+                f"{label}: derived grant drops escalation triggers "
+                f"{dropped} its parent {parent_ref!r} requires; removing "
+                f"an escalation widens authority")
+    lost = sorted(_hashable_set(parent.get("distinct_holder_constraint_refs"))
+                  - _hashable_set(doc.get("distinct_holder_constraint_refs")), key=repr)
+    if lost:
+        f.error("attenuation-widened",
+                f"{label}: derived grant drops distinct-holder "
+                f"constraints {lost} its parent {parent_ref!r} carries")
+
+
+def _check_grant_attenuation(f, label, doc, ctx, scope, tier, tier_rank):
     # (f) attenuation is monotonic.
     parent_ref = doc.get("parent_grant_ref")
     if parent_ref:
@@ -1012,72 +1111,13 @@ def check_grant(f: Findings, label: str, doc: dict, ctx: Context) -> None:
                     f"in the corpus, so attenuation cannot be checked")
         else:
             pscope = _mapping(parent.get("scope"))
-            child_acts = _hashable_set(scope.get("acts"))
-            parent_acts = _hashable_set(pscope.get("acts"))
-            widened = sorted(child_acts - parent_acts, key=repr)
-            if widened:
-                f.error("attenuation-widened",
-                        f"{label}: derived grant adds acts {widened} its parent "
-                        f"{parent_ref!r} does not confer; derivation may narrow "
-                        f"and may never widen")
-            parent_objects = pscope.get("objects")
-            child_objects = scope.get("objects")
-            if parent_objects is not None:
-                if child_objects is None:
-                    f.error("attenuation-widened",
-                            f"{label}: parent {parent_ref!r} narrows to objects "
-                            f"{sorted(parent_objects)} and the derived grant "
-                            f"drops the narrowing entirely")
-                else:
-                    extra = sorted(_hashable_set(child_objects)
-                                   - _hashable_set(parent_objects), key=repr)
-                    if extra:
-                        f.error("attenuation-widened",
-                                f"{label}: derived grant adds objects {extra} "
-                                f"outside its parent {parent_ref!r}")
-            parent_rank = ctx.rank(pscope.get("authority_tier"))
-            if tier_rank is not None and parent_rank is not None and tier_rank > parent_rank:
-                f.error("attenuation-widened",
-                        f"{label}: derived grant raises authority tier to "
-                        f"{tier!r} above its parent {parent_ref!r} at "
-                        f"{pscope.get('authority_tier')!r}")
-            child_exp = parse_time(doc.get("expires_at"))
-            parent_exp = parse_time(parent.get("expires_at"))
-            if child_exp and parent_exp and child_exp > parent_exp:
-                f.error("attenuation-widened",
-                        f"{label}: derived grant expires {doc.get('expires_at')} "
-                        f"after its parent {parent_ref!r} at "
-                        f"{parent.get('expires_at')}; lifetime may only shorten")
-            # Posture is part of scope, so attenuation must cover it. Rule (h)
-            # declares posture and tier ONE vocabulary; attenuating only the
-            # tier would let a derivation keep its parent's tier and quietly
-            # waive the approval that made that tier survivable.
-            pposture = _mapping(pscope.get("approval_posture"))
-            cposture = _mapping(scope.get("approval_posture"))
-            if (pposture.get("hermes_approval_required_before_apply") is True
-                    and cposture.get("hermes_approval_required_before_apply") is False):
-                f.error("attenuation-widened",
-                        f"{label}: derived grant waives approval before apply "
-                        f"where its parent {parent_ref!r} requires it")
-            if (pposture.get("authority_agents_may_approve") is False
-                    and cposture.get("authority_agents_may_approve") is True):
-                f.error("attenuation-widened",
-                        f"{label}: derived grant permits agent approval where "
-                        f"its parent {parent_ref!r} withholds it")
-            dropped = sorted(_hashable_set(pposture.get("human_escalation_required_for"))
-                             - _hashable_set(cposture.get("human_escalation_required_for")), key=repr)
-            if dropped:
-                f.error("attenuation-widened",
-                        f"{label}: derived grant drops escalation triggers "
-                        f"{dropped} its parent {parent_ref!r} requires; removing "
-                        f"an escalation widens authority")
-            lost = sorted(_hashable_set(parent.get("distinct_holder_constraint_refs"))
-                          - _hashable_set(doc.get("distinct_holder_constraint_refs")), key=repr)
-            if lost:
-                f.error("attenuation-widened",
-                        f"{label}: derived grant drops distinct-holder "
-                        f"constraints {lost} its parent {parent_ref!r} carries")
+            _check_attenuated_acts_and_objects(f, label, scope, pscope, parent_ref)
+            _check_attenuated_tier_and_expiry(f, label, doc, ctx, parent, parent_ref,
+                                             pscope, tier, tier_rank)
+            _check_attenuated_posture(f, label, doc, scope, parent, parent_ref, pscope)
 
+
+def _check_grant_posture(f, label, scope, ctx, tier, tier_rank):
     # (g) one authority vocabulary, read from the canonical envelope.
     posture = scope.get("approval_posture")
     if isinstance(posture, dict):
@@ -1105,11 +1145,29 @@ def check_grant(f: Findings, label: str, doc: dict, ctx: Context) -> None:
                         f"authority tier is {tier!r}; approving is an effecting "
                         f"act and requires tier 'act' or above")
 
+
+def check_grant(f: Findings, label: str, doc: dict, ctx: Context) -> None:
+    scope = _mapping(doc.get("scope"))
+    tier = scope.get("authority_tier")
+    tier_rank = ctx.rank(tier)
+    if tier_rank is None:
+        f.error("authority-tier-unknown",
+                f"{label}: scope names authority tier {tier!r}, which the "
+                f"custody registry does not declare")
+
+    # The declared extension point for grant rules (RULED Q1): run after the
+    # tier lookup and before rule (e). EMPTY here.
+    for rule in GRANT_RULES:
+        rule(f, label, doc, ctx)
+
+    _check_grant_custody_ceiling(f, label, doc, ctx, tier, tier_rank)
+    _check_grant_attenuation(f, label, doc, ctx, scope, tier, tier_rank)
+    _check_grant_posture(f, label, scope, ctx, tier, tier_rank)
+
     if doc.get("state") == "revoked" and not doc.get("revocation"):
         f.error("revocation-unrecorded",
                 f"{label}: state is 'revoked' with no revocation block "
                 f"recording when and why")
-
 
 # --------------------------- rules (i)-(m): exercise ---------------------------
 
@@ -1141,19 +1199,251 @@ def _revoked_ancestor(ctx: Context, grant_ref: str) -> str | None:
     return None
 
 
-def check_exercise(f: Findings, label: str, doc: dict, ctx: Context) -> None:
-    proof = _mapping(doc.get("proof_of_possession"))
-    presented = proof.get("presented")
-    verified = proof.get("verified")
-    event_class = doc.get("event_class")
-    outcome = doc.get("outcome")
-    refusal = _mapping(doc.get("refusal"))
+def _check_exercise_act(f, label, doc, grant):
+    gscope = _mapping(grant.get("scope"))
+    if doc.get("act") and doc["act"] not in _sequence(gscope.get("acts")):
+        f.error("act-outside-grant-scope",
+                f"{label}: act {doc['act']!r} is not among the acts grant "
+                f"{doc.get('grant_ref')!r} confers "
+                f"({sorted(_sequence(gscope.get('acts')), key=repr)})")
 
-    if outcome == "refused" and not refusal:
-        f.error("refusal-unrecorded",
-                f"{label}: outcome is 'refused' with no refusal block naming "
-                f"what was lacking")
 
+def _exercise_attributed_keys(f, label, proof, verified, exercise_attribution):
+    attributed_key = (exercise_attribution.get("presenting_key_ref")
+                      if exercise_attribution.get("mode") != "unattributed"
+                      else None)
+    if not isinstance(attributed_key, str):
+        attributed_key = None
+    verified_key = (proof.get("presenting_key_ref")
+                    if verified is True else None)
+    if not isinstance(verified_key, str):
+        verified_key = None
+    if verified is True and not verified_key:
+        # No fallback to the attribution key here: a record could claim
+        # a verified signature, omit the proof key, and put the
+        # audience's key in attribution — the original laundering route,
+        # one omission deeper.
+        f.error("presenting-key-unresolved",
+                f"{label}: the proof block records a verified signature "
+                f"but names no presenting key, so the exercise cannot be "
+                f"bound to any wallet; a verification that does not "
+                f"record WHICH key verified is refused rather than "
+                f"trusted from the attribution block")
+
+    return attributed_key, verified_key
+
+
+def _check_verified_attribution(f, label, exercise_attribution, verified_key, attributed_key):
+    if verified_key and exercise_attribution.get("mode") == "unattributed":
+        f.error("attribution-laundered",
+                f"{label}: the proof block records a VERIFIED signature "
+                f"by {verified_key!r} while the act is recorded "
+                f"'unattributed'; a verified presented key is an "
+                f"establishable identity, and recording the act as "
+                f"nobody's launders it past the audience and "
+                f"distinct-holder bindings it would otherwise face")
+    elif verified_key and attributed_key and attributed_key != verified_key:
+        f.error("attribution-laundered",
+                f"{label}: attribution names presenting key "
+                f"{attributed_key!r} while the verified proof was "
+                f"presented by {verified_key!r}; attribution follows the "
+                f"key that actually signed")
+
+
+def _resolve_presenting_wallet(f, label, ctx, presenting_key, exercising_wallet):
+    key_wallet = None
+    if presenting_key:
+        owners = ctx.wallets_by_key.get(presenting_key) or []
+        if not owners:
+            f.error("presenting-key-unresolved",
+                    f"{label}: presenting key {presenting_key!r} is in no "
+                    f"known wallet's DECLARED KEY SET, so the audience "
+                    f"binding cannot be checked; an exercise presented by "
+                    f"an unknown key is refused rather than passed over")
+        elif len(owners) > 1:
+            f.error("presenting-key-unresolved",
+                    f"{label}: presenting key {presenting_key!r} is "
+                    f"declared by more than one wallet "
+                    f"({sorted(owners)}); `key_id` is scoped to its DID "
+                    f"anchor, so a bare key reference cannot say which "
+                    f"wallet presented — an ambiguous key is refused "
+                    f"rather than resolved by file order")
+        else:
+            key_wallet = owners[0]
+            if exercising_wallet and key_wallet != exercising_wallet:
+                f.error("attribution-laundered",
+                        f"{label}: attribution names wallet "
+                        f"{exercising_wallet!r} while the presenting key "
+                        f"{presenting_key!r} is wallet {key_wallet!r}'s; "
+                        f"an act is attributed to the wallet whose key "
+                        f"was presented, never to a declared stand-in")
+
+    return key_wallet
+
+
+def _check_exercise_presenter(f, label, doc, ctx, proof, verified, grant):
+    audience_wallet = _mapping(grant.get("audience")).get("wallet_ref")
+    exercising_wallet = attribution_wallet_ref(doc)
+    # The presenting wallet is DERIVED from the presenting key, and the
+    # binding key is the VERIFIED proof block's key when one is recorded.
+    # `attribution.presenting_key_ref` is the same self-declared data as
+    # `attribution.wallet_ref` — deriving from it alone would move the
+    # lie one field over, not close it. A verified proof ESTABLISHES its
+    # key (this corpus's own semantics: an unverified signature
+    # establishes nothing, which is why a verification failure may be
+    # recorded unattributed); the attribution block may narrate the same
+    # fact, and may not contradict it.
+    exercise_attribution = _mapping(doc.get("attribution"))
+    attributed_key, verified_key = _exercise_attributed_keys(
+        f, label, proof, verified, exercise_attribution)
+    presenting_key = verified_key if verified is True else attributed_key
+    _check_verified_attribution(f, label, exercise_attribution, verified_key, attributed_key)
+    key_wallet = _resolve_presenting_wallet(f, label, ctx, presenting_key, exercising_wallet)
+    presented_by = key_wallet or exercising_wallet
+    if audience_wallet and presented_by and presented_by != audience_wallet:
+        f.error("audience-mismatch",
+                f"{label}: presented by wallet {presented_by!r} but "
+                f"grant {doc.get('grant_ref')!r} addresses "
+                f"{audience_wallet!r}; a grant is exercisable only by its "
+                f"audience, or proof of possession secures nothing")
+    return audience_wallet, presenting_key, key_wallet
+
+
+def _exercise_custody_basis(wallet, audience_wallet, established_key):
+    basis_custody = None
+    basis_where = f"wallet {audience_wallet!r}"
+    if established_key:
+        basis_custody = custody_of_declared_key(wallet, established_key)
+        if basis_custody is not None:
+            basis_where = (f"presenting key {established_key!r} of "
+                           f"wallet {audience_wallet!r}")
+    if basis_custody is None:
+        basis_custody = _mapping(wallet.get("custody"))
+
+    return basis_custody, basis_where
+
+
+def _check_exercise_key_ceiling(f, label, doc, ctx, grant, established_key, declared_model, outcome):
+    # PER-KEY CUSTODY CAPS WHAT THAT KEY'S SIGNATURE EVIDENCES. Rule (e)
+    # caps a grant's tier by its AUDIENCE WALLET's ceiling at issuance,
+    # which is the only cap issuance can apply: it cannot know which of
+    # the wallet's keys will sign. This is the companion cap at USE. A
+    # wallet may hold a grant its weakest key must not exercise, and
+    # without this check that key exercises it anyway — the custody
+    # ladder silently re-flattened by whichever key was reachable.
+    key_member = (ctx.custody.get(declared_model)
+                  if isinstance(declared_model, str) else None)
+    key_ceiling = (key_member.get("authority_ceiling")
+                   if isinstance(key_member, dict) else None)
+    key_ceiling_rank = ctx.rank(key_ceiling)
+    grant_tier = _mapping(grant.get("scope")).get("authority_tier")
+    grant_tier_rank = ctx.rank(grant_tier)
+    # GUARDED ON `permitted`, like every other use-time cap. The
+    # exercise contract already closes a `custody_ceiling_exceeded`
+    # refusal code for exactly this event, so a record that TRUTHFULLY
+    # documents the refusal must not itself be a finding — otherwise
+    # the corpus cannot carry the honest case at all.
+    if (established_key and outcome == "permitted"
+            and key_ceiling_rank is not None
+            and grant_tier_rank is not None
+            and grant_tier_rank > key_ceiling_rank):
+        f.error("presenting-key-evidence-cap",
+                f"{label}: grant {doc.get('grant_ref')!r} confers tier "
+                f"{grant_tier!r}, above the ceiling {key_ceiling!r} of "
+                f"custody {declared_model!r} declared for presenting "
+                f"key {established_key!r}; per-key custody caps what "
+                f"THAT key's signature evidences, so a grant its "
+                f"wallet may hold is not a grant every one of its keys "
+                f"may exercise")
+
+
+def _check_exercise_retired_key(f, label, wallet, established_key, audience_wallet, outcome):
+    # A RETIRED KEY PRESENTS NOTHING, checked at USE. Reported under the
+    # existing revocation code rather than a new one: revoking a grant,
+    # suspending a wallet and retiring one of its keys are one rule —
+    # issuance-time validity is not evidence of current validity — and a
+    # second code for the third subject would be a second name for one
+    # rule. The wallet's own standing is untouched, which is the point:
+    # rotating one of four seat keys must not park the other three.
+    if established_key and outcome == "permitted":
+        key_state = declared_key_state(wallet, established_key)
+        if key_state in ("suspended", "revoked"):
+            f.error("revoked-chain-exercised",
+                    f"{label}: exercise permitted under presenting key "
+                    f"{established_key!r}, whose declaration in wallet "
+                    f"{audience_wallet!r} records state {key_state!r}; "
+                    f"a retired key presents nothing, and the "
+                    f"retirement is checked at exercise rather than "
+                    f"trusted from issuance")
+
+
+def _check_exercise_wallet_custody(f, label, doc, ctx, grant, wallet, audience_wallet,
+                                    presenting_key, key_wallet, verified, outcome):
+    # THE BASIS IS THE PRESENTING KEY'S CUSTODY, not the wallet's
+    # primary declaration (add-multi-key-wallets, design D3). A
+    # signature evidences only what the custody of THE KEY THAT SIGNED
+    # permits, so a wallet declaring several keys under different
+    # custody would otherwise have every one of its exercises measured
+    # against whichever key happens to be primary. For a single-key
+    # record the two are the same object, so no existing verdict moves.
+    #
+    # When no presenting key was ESTABLISHED — an unattributed act, a
+    # verification failure, a key that resolved to no wallet or to more
+    # than one — the wallet's own declaration is the basis, exactly as
+    # before. An unestablished key is not an occasion to skip the check.
+    # ESTABLISHED means a VERIFIED proof named the key. The presenting
+    # key falls back to the record's own attribution block when the
+    # signature did not verify, and keying custody on THAT would
+    # measure an exercise against self-declared data — the laundering
+    # surface this rule exists to close. So an unverified exercise
+    # takes the wallet's declaration, exactly as it did before sets
+    # were expressible.
+    established_key = (presenting_key
+                       if verified is True
+                       and key_wallet == audience_wallet
+                       else None)
+    basis_custody, basis_where = _exercise_custody_basis(
+        wallet, audience_wallet, established_key)
+    declared_model = basis_custody.get("model")
+    in_force = doc.get("custody_model_in_force")
+    if declared_model and in_force and in_force != declared_model:
+        f.error("custody-model-mismatch",
+                f"{label}: records custody {in_force!r} in force while "
+                f"{basis_where} declares {declared_model!r}; "
+                f"an exercise cannot claim evidence its wallet's custody "
+                f"does not supply")
+    _check_exercise_key_ceiling(
+        f, label, doc, ctx, grant, established_key, declared_model, outcome)
+    _check_exercise_retired_key(
+        f, label, wallet, established_key, audience_wallet, outcome)
+    if wallet.get("state") == "suspended" and outcome == "permitted":
+        f.error("revoked-chain-exercised",
+                f"{label}: exercise permitted while wallet "
+                f"{audience_wallet!r} is suspended")
+
+
+def _check_required_constraint_evaluations(f, label, doc, grant, outcome):
+    # (m, second half) Constraints are declared on the GRANT. An exercise
+    # that simply omits the evaluation would otherwise escape a constraint
+    # its own grant carries.
+    if outcome == "permitted":
+        evaluated = {e.get("constraint_ref")
+                     for e in _sequence(doc.get("constraint_evaluations"))
+                     if isinstance(e, dict)
+                     and _hashable(e.get("constraint_ref"))}
+        for ref in _sequence(grant.get("distinct_holder_constraint_refs")):
+            if not _hashable(ref):
+                continue  # unhashable member; the schema finding on the
+                          # grant is the report, not a membership crash
+            if ref not in evaluated:
+                f.error("distinct-holder-violated",
+                        f"{label}: grant {doc.get('grant_ref')!r} declares "
+                        f"constraint {ref!r} and this permitted exercise "
+                        f"records no evaluation of it; a declared "
+                        f"constraint is not escaped by silence")
+
+
+def _check_exercise_grant_binding(f, label, doc, ctx, proof, verified, outcome):
     # The exercise must actually BIND to the grant it names. Without these an
     # exercise can cite a grant that does not exist, perform an act the grant
     # never conferred, be presented by a wallet the grant does not address, or
@@ -1168,210 +1458,23 @@ def check_exercise(f: Findings, label: str, doc: dict, ctx: Context) -> None:
                 f"state can be checked; an exercise against an unknown grant is "
                 f"refused rather than passed over")
     elif grant is not None:
-        gscope = _mapping(grant.get("scope"))
-        if doc.get("act") and doc["act"] not in _sequence(gscope.get("acts")):
-            f.error("act-outside-grant-scope",
-                    f"{label}: act {doc['act']!r} is not among the acts grant "
-                    f"{doc.get('grant_ref')!r} confers "
-                    f"({sorted(_sequence(gscope.get('acts')), key=repr)})")
-        audience_wallet = _mapping(grant.get("audience")).get("wallet_ref")
-        exercising_wallet = attribution_wallet_ref(doc)
-        # The presenting wallet is DERIVED from the presenting key, and the
-        # binding key is the VERIFIED proof block's key when one is recorded.
-        # `attribution.presenting_key_ref` is the same self-declared data as
-        # `attribution.wallet_ref` — deriving from it alone would move the
-        # lie one field over, not close it. A verified proof ESTABLISHES its
-        # key (this corpus's own semantics: an unverified signature
-        # establishes nothing, which is why a verification failure may be
-        # recorded unattributed); the attribution block may narrate the same
-        # fact, and may not contradict it.
-        exercise_attribution = _mapping(doc.get("attribution"))
-        attributed_key = (exercise_attribution.get("presenting_key_ref")
-                          if exercise_attribution.get("mode") != "unattributed"
-                          else None)
-        if not isinstance(attributed_key, str):
-            attributed_key = None
-        verified_key = (proof.get("presenting_key_ref")
-                        if verified is True else None)
-        if not isinstance(verified_key, str):
-            verified_key = None
-        if verified is True and not verified_key:
-            # No fallback to the attribution key here: a record could claim
-            # a verified signature, omit the proof key, and put the
-            # audience's key in attribution — the original laundering route,
-            # one omission deeper.
-            f.error("presenting-key-unresolved",
-                    f"{label}: the proof block records a verified signature "
-                    f"but names no presenting key, so the exercise cannot be "
-                    f"bound to any wallet; a verification that does not "
-                    f"record WHICH key verified is refused rather than "
-                    f"trusted from the attribution block")
-        presenting_key = verified_key if verified is True else attributed_key
-        key_wallet = None
-        if verified_key and exercise_attribution.get("mode") == "unattributed":
-            f.error("attribution-laundered",
-                    f"{label}: the proof block records a VERIFIED signature "
-                    f"by {verified_key!r} while the act is recorded "
-                    f"'unattributed'; a verified presented key is an "
-                    f"establishable identity, and recording the act as "
-                    f"nobody's launders it past the audience and "
-                    f"distinct-holder bindings it would otherwise face")
-        elif verified_key and attributed_key and attributed_key != verified_key:
-            f.error("attribution-laundered",
-                    f"{label}: attribution names presenting key "
-                    f"{attributed_key!r} while the verified proof was "
-                    f"presented by {verified_key!r}; attribution follows the "
-                    f"key that actually signed")
-        if presenting_key:
-            owners = ctx.wallets_by_key.get(presenting_key) or []
-            if not owners:
-                f.error("presenting-key-unresolved",
-                        f"{label}: presenting key {presenting_key!r} is in no "
-                        f"known wallet's DECLARED KEY SET, so the audience "
-                        f"binding cannot be checked; an exercise presented by "
-                        f"an unknown key is refused rather than passed over")
-            elif len(owners) > 1:
-                f.error("presenting-key-unresolved",
-                        f"{label}: presenting key {presenting_key!r} is "
-                        f"declared by more than one wallet "
-                        f"({sorted(owners)}); `key_id` is scoped to its DID "
-                        f"anchor, so a bare key reference cannot say which "
-                        f"wallet presented — an ambiguous key is refused "
-                        f"rather than resolved by file order")
-            else:
-                key_wallet = owners[0]
-                if exercising_wallet and key_wallet != exercising_wallet:
-                    f.error("attribution-laundered",
-                            f"{label}: attribution names wallet "
-                            f"{exercising_wallet!r} while the presenting key "
-                            f"{presenting_key!r} is wallet {key_wallet!r}'s; "
-                            f"an act is attributed to the wallet whose key "
-                            f"was presented, never to a declared stand-in")
-        presented_by = key_wallet or exercising_wallet
-        if audience_wallet and presented_by and presented_by != audience_wallet:
-            f.error("audience-mismatch",
-                    f"{label}: presented by wallet {presented_by!r} but "
-                    f"grant {doc.get('grant_ref')!r} addresses "
-                    f"{audience_wallet!r}; a grant is exercisable only by its "
-                    f"audience, or proof of possession secures nothing")
+        _check_exercise_act(f, label, doc, grant)
+        audience_wallet, presenting_key, key_wallet = _check_exercise_presenter(
+            f, label, doc, ctx, proof, verified, grant)
         wallet = (ctx.wallets.get(audience_wallet)
                   if isinstance(audience_wallet, str) else None)
         if wallet is not None:
-            # THE BASIS IS THE PRESENTING KEY'S CUSTODY, not the wallet's
-            # primary declaration (add-multi-key-wallets, design D3). A
-            # signature evidences only what the custody of THE KEY THAT SIGNED
-            # permits, so a wallet declaring several keys under different
-            # custody would otherwise have every one of its exercises measured
-            # against whichever key happens to be primary. For a single-key
-            # record the two are the same object, so no existing verdict moves.
-            #
-            # When no presenting key was ESTABLISHED — an unattributed act, a
-            # verification failure, a key that resolved to no wallet or to more
-            # than one — the wallet's own declaration is the basis, exactly as
-            # before. An unestablished key is not an occasion to skip the check.
-            # ESTABLISHED means a VERIFIED proof named the key. The presenting
-            # key falls back to the record's own attribution block when the
-            # signature did not verify, and keying custody on THAT would
-            # measure an exercise against self-declared data — the laundering
-            # surface this rule exists to close. So an unverified exercise
-            # takes the wallet's declaration, exactly as it did before sets
-            # were expressible.
-            established_key = (presenting_key
-                               if verified is True
-                               and key_wallet == audience_wallet
-                               else None)
-            basis_custody = None
-            basis_where = f"wallet {audience_wallet!r}"
-            if established_key:
-                basis_custody = custody_of_declared_key(wallet, established_key)
-                if basis_custody is not None:
-                    basis_where = (f"presenting key {established_key!r} of "
-                                   f"wallet {audience_wallet!r}")
-            if basis_custody is None:
-                basis_custody = _mapping(wallet.get("custody"))
-            declared_model = basis_custody.get("model")
-            in_force = doc.get("custody_model_in_force")
-            if declared_model and in_force and in_force != declared_model:
-                f.error("custody-model-mismatch",
-                        f"{label}: records custody {in_force!r} in force while "
-                        f"{basis_where} declares {declared_model!r}; "
-                        f"an exercise cannot claim evidence its wallet's custody "
-                        f"does not supply")
-            # PER-KEY CUSTODY CAPS WHAT THAT KEY'S SIGNATURE EVIDENCES. Rule (e)
-            # caps a grant's tier by its AUDIENCE WALLET's ceiling at issuance,
-            # which is the only cap issuance can apply: it cannot know which of
-            # the wallet's keys will sign. This is the companion cap at USE. A
-            # wallet may hold a grant its weakest key must not exercise, and
-            # without this check that key exercises it anyway — the custody
-            # ladder silently re-flattened by whichever key was reachable.
-            key_member = (ctx.custody.get(declared_model)
-                          if isinstance(declared_model, str) else None)
-            key_ceiling = (key_member.get("authority_ceiling")
-                           if isinstance(key_member, dict) else None)
-            key_ceiling_rank = ctx.rank(key_ceiling)
-            grant_tier = _mapping(grant.get("scope")).get("authority_tier")
-            grant_tier_rank = ctx.rank(grant_tier)
-            # GUARDED ON `permitted`, like every other use-time cap. The
-            # exercise contract already closes a `custody_ceiling_exceeded`
-            # refusal code for exactly this event, so a record that TRUTHFULLY
-            # documents the refusal must not itself be a finding — otherwise
-            # the corpus cannot carry the honest case at all.
-            if (established_key and outcome == "permitted"
-                    and key_ceiling_rank is not None
-                    and grant_tier_rank is not None
-                    and grant_tier_rank > key_ceiling_rank):
-                f.error("presenting-key-evidence-cap",
-                        f"{label}: grant {doc.get('grant_ref')!r} confers tier "
-                        f"{grant_tier!r}, above the ceiling {key_ceiling!r} of "
-                        f"custody {declared_model!r} declared for presenting "
-                        f"key {established_key!r}; per-key custody caps what "
-                        f"THAT key's signature evidences, so a grant its "
-                        f"wallet may hold is not a grant every one of its keys "
-                        f"may exercise")
-            # A RETIRED KEY PRESENTS NOTHING, checked at USE. Reported under the
-            # existing revocation code rather than a new one: revoking a grant,
-            # suspending a wallet and retiring one of its keys are one rule —
-            # issuance-time validity is not evidence of current validity — and a
-            # second code for the third subject would be a second name for one
-            # rule. The wallet's own standing is untouched, which is the point:
-            # rotating one of four seat keys must not park the other three.
-            if established_key and outcome == "permitted":
-                key_state = declared_key_state(wallet, established_key)
-                if key_state in ("suspended", "revoked"):
-                    f.error("revoked-chain-exercised",
-                            f"{label}: exercise permitted under presenting key "
-                            f"{established_key!r}, whose declaration in wallet "
-                            f"{audience_wallet!r} records state {key_state!r}; "
-                            f"a retired key presents nothing, and the "
-                            f"retirement is checked at exercise rather than "
-                            f"trusted from issuance")
-            if wallet.get("state") == "suspended" and outcome == "permitted":
-                f.error("revoked-chain-exercised",
-                        f"{label}: exercise permitted while wallet "
-                        f"{audience_wallet!r} is suspended")
+            _check_exercise_wallet_custody(
+                f, label, doc, ctx, grant, wallet, audience_wallet,
+                presenting_key, key_wallet, verified, outcome)
         if grant.get("state") == "expired" and outcome == "permitted":
             f.error("revoked-chain-exercised",
                     f"{label}: exercise permitted against grant "
                     f"{doc.get('grant_ref')!r}, whose state is 'expired'")
-        # (m, second half) Constraints are declared on the GRANT. An exercise
-        # that simply omits the evaluation would otherwise escape a constraint
-        # its own grant carries.
-        if outcome == "permitted":
-            evaluated = {e.get("constraint_ref")
-                         for e in _sequence(doc.get("constraint_evaluations"))
-                         if isinstance(e, dict)
-                         and _hashable(e.get("constraint_ref"))}
-            for ref in _sequence(grant.get("distinct_holder_constraint_refs")):
-                if not _hashable(ref):
-                    continue  # unhashable member; the schema finding on the
-                              # grant is the report, not a membership crash
-                if ref not in evaluated:
-                    f.error("distinct-holder-violated",
-                            f"{label}: grant {doc.get('grant_ref')!r} declares "
-                            f"constraint {ref!r} and this permitted exercise "
-                            f"records no evaluation of it; a declared "
-                            f"constraint is not escaped by silence")
+        _check_required_constraint_evaluations(f, label, doc, grant, outcome)
 
+
+def _check_exercise_possession(f, label, presented, verified, outcome, refusal):
     # (i) proof of possession, and a refusal that names the right absence.
     if presented is not True:
         if outcome == "permitted":
@@ -1394,6 +1497,8 @@ def check_exercise(f: Findings, label: str, doc: dict, ctx: Context) -> None:
                 f"is recorded verified={verified!r}; presentation is not proof, "
                 f"and an unchecked signature is not a verified one")
 
+
+def _check_exercise_event_class(f, label, presented, verified, event_class):
     # (j) a verification failure is not an absence.
     if presented is True and verified is False:
         expected_class = "verification_failure"
@@ -1417,6 +1522,8 @@ def check_exercise(f: Findings, label: str, doc: dict, ctx: Context) -> None:
                 f"a request carrying no signature are different events and stay "
                 f"distinguishable in the record")
 
+
+def _check_exercise_attribution(f, label, doc):
     # (k) attribution is not laundered.
     attribution = _mapping(doc.get("attribution"))
     mode = attribution.get("mode")
@@ -1439,6 +1546,8 @@ def check_exercise(f: Findings, label: str, doc: dict, ctx: Context) -> None:
                 f"shared credential is transport and never the actor, so this "
                 f"act is 'unattributed'")
 
+
+def _check_exercise_revocation(f, label, doc, ctx, outcome):
     # (l) revocation is checked at use.
     check = _mapping(doc.get("revocation_check"))
     if check.get("performed_at_exercise") is not True:
@@ -1461,6 +1570,8 @@ def check_exercise(f: Findings, label: str, doc: dict, ctx: Context) -> None:
                 f"{label}: revocation check reports 'revoked' and the exercise "
                 f"was permitted anyway")
 
+
+def _check_exercise_constraints(f, label, doc, ctx, outcome):
     # (m) distinct-holder constraints bind where declared.
     for evaluation in _sequence(doc.get("constraint_evaluations")):
         if not isinstance(evaluation, dict):
@@ -1482,13 +1593,33 @@ def check_exercise(f: Findings, label: str, doc: dict, ctx: Context) -> None:
             f.warn("constraint-unresolved",
                    f"{label}: constraint {ref!r} does not resolve in the corpus")
 
+
+def check_exercise(f: Findings, label: str, doc: dict, ctx: Context) -> None:
+    proof = _mapping(doc.get("proof_of_possession"))
+    presented = proof.get("presented")
+    verified = proof.get("verified")
+    event_class = doc.get("event_class")
+    outcome = doc.get("outcome")
+    refusal = _mapping(doc.get("refusal"))
+
+    if outcome == "refused" and not refusal:
+        f.error("refusal-unrecorded",
+                f"{label}: outcome is 'refused' with no refusal block naming "
+                f"what was lacking")
+
+    _check_exercise_grant_binding(f, label, doc, ctx, proof, verified, outcome)
+    _check_exercise_possession(f, label, presented, verified, outcome, refusal)
+    _check_exercise_event_class(f, label, presented, verified, event_class)
+    _check_exercise_attribution(f, label, doc)
+    _check_exercise_revocation(f, label, doc, ctx, outcome)
+    _check_exercise_constraints(f, label, doc, ctx, outcome)
+
     # Custody in force must be a member of the closed set.
     model = doc.get("custody_model_in_force")
     if model and (not isinstance(model, str) or model not in ctx.custody):
         f.error("custody-model-unknown",
                 f"{label}: custody_model_in_force {model!r} is not a member of "
                 f"the closed custody registry")
-
 
 # --------------------------- rule (n): non-substrate ---------------------------
 
@@ -1509,6 +1640,27 @@ def check_subject_attestation(f: Findings, label: str, doc: dict) -> None:
 
 # --------------------------- rules (o)-(q): the agent profile ---------------------------
 
+def _check_composition_component(f, label, component):
+    if not isinstance(component, dict):
+        return
+    name = component.get("component")
+    mode = component.get("binding_mode")
+    if mode == "content" and not component.get("content_digest"):
+        f.error("composition-binding-incomplete",
+                f"{label}: component {name!r} is bound by content and "
+                f"carries no digest, so the hash covers nothing for it")
+    if mode == "reference":
+        reference = _mapping(component.get("reference"))
+        if not reference.get("ref") or not reference.get(
+                "governing_configuration_digest"):
+            f.error("composition-binding-incomplete",
+                    f"{label}: component {name!r} is bound by reference and "
+                    f"must carry both the corpus ref and the digest of the "
+                    f"configuration governing how it is consulted; without "
+                    f"the latter an agent could change what it may retrieve "
+                    f"without changing its identity")
+
+
 def check_agent_composition(f: Findings, label: str, doc: dict,
                             ctx: Context) -> None:
     composition = _mapping(doc.get("composition"))
@@ -1521,24 +1673,7 @@ def check_agent_composition(f: Findings, label: str, doc: dict,
                 f"set; the set is part of the declaration so a reader can tell "
                 f"what a matching hash was actually asserting")
     for component in _sequence(component_set):
-        if not isinstance(component, dict):
-            continue
-        name = component.get("component")
-        mode = component.get("binding_mode")
-        if mode == "content" and not component.get("content_digest"):
-            f.error("composition-binding-incomplete",
-                    f"{label}: component {name!r} is bound by content and "
-                    f"carries no digest, so the hash covers nothing for it")
-        if mode == "reference":
-            reference = _mapping(component.get("reference"))
-            if not reference.get("ref") or not reference.get(
-                    "governing_configuration_digest"):
-                f.error("composition-binding-incomplete",
-                        f"{label}: component {name!r} is bound by reference and "
-                        f"must carry both the corpus ref and the digest of the "
-                        f"configuration governing how it is consulted; without "
-                        f"the latter an agent could change what it may retrieve "
-                        f"without changing its identity")
+        _check_composition_component(f, label, component)
 
     # (p) a declared change revokes immediately.
     attestation = _mapping(doc.get("attestation"))
@@ -1672,73 +1807,45 @@ def negative_paths() -> list[Path]:
     return out
 
 
-def self_test(f: Findings, docs: dict[str, dict], ctx: Context) -> None:
-    positives = positive_paths()
-    negatives = negative_paths()
-    if not positives:
-        f.error("examples-missing", "no packaged positive examples found")
-    if not negatives:
-        f.error("examples-missing", "no packaged negative fixtures found")
+def _check_negative_fixture(f, docs, ctx, path, covered):
+    code, detail, requirement = expected_failure(path)
+    label = f"negative/{path.name}"
+    if requirement not in REQUIREMENTS:
+        f.error("negative-requirement-unknown",
+                f"{label}: declares requirement {requirement!r}, which is "
+                f"not one of the capability's requirements")
+    else:
+        covered.setdefault(requirement, []).append(path.name)
 
-    # The canonical custody registry is validated as a positive: it is the
-    # closed set every other record resolves against.
-    registry_label = str(CUSTODY_REGISTRY_PATH.relative_to(ROOT))
-    validate_record(f, registry_label, ctx.registry, docs, ctx)
-    if f.errors:
-        f.note("the canonical custody registry is validated first; downstream "
-               "ceiling checks resolve against it")
+    local = Findings()
+    local_ctx = Context(ctx.registry, ctx.vocabulary)
+    local_ctx.wallets = dict(ctx.wallets)
+    local_ctx.grants = dict(ctx.grants)
+    local_ctx.constraints = dict(ctx.constraints)
+    local_ctx.wallets_by_key = {k: list(v)
+                                for k, v in ctx.wallets_by_key.items()}
+    local_ctx.duplicate_ids = set(ctx.duplicate_ids)
+    doc = load_yaml(path)
+    if isinstance(doc, dict):
+        local_ctx.index(doc)
+    validate_record(local, label, doc, docs, local_ctx)
 
-    for path in positives:
-        label = str(path.relative_to(ROOT))
-        before = len(f.errors)
-        validate_record(f, label, load_yaml(path), docs, ctx)
-        for i in range(before, len(f.errors)):
-            f.errors[i] = f"{f.errors[i]} [expected a valid example]"
+    if not local.errors:
+        f.error("negative-should-fail",
+                f"{label}: expected invalid, validated cleanly — the probe "
+                f"proves nothing")
+    elif code not in codes_of(local.errors):
+        f.error("negative-wrong-reason",
+                f"{label}: expected finding {code!r}, got "
+                f"{sorted(codes_of(local.errors))}")
+    elif detail and not any(detail in line for line in lines_for(local.errors, code)):
+        f.error("negative-wrong-reason",
+                f"{label}: finding {code!r} fired but not for {detail!r} — "
+                f"the fixture no longer tests the invariant it is named "
+                f"for: {lines_for(local.errors, code)}")
 
-    covered: dict[str, list[str]] = {}
-    for path in negatives:
-        code, detail, requirement = expected_failure(path)
-        label = f"negative/{path.name}"
-        if requirement not in REQUIREMENTS:
-            f.error("negative-requirement-unknown",
-                    f"{label}: declares requirement {requirement!r}, which is "
-                    f"not one of the capability's requirements")
-        else:
-            covered.setdefault(requirement, []).append(path.name)
 
-        local = Findings()
-        local_ctx = Context(ctx.registry, ctx.vocabulary)
-        local_ctx.wallets = dict(ctx.wallets)
-        local_ctx.grants = dict(ctx.grants)
-        local_ctx.constraints = dict(ctx.constraints)
-        local_ctx.wallets_by_key = {k: list(v)
-                                    for k, v in ctx.wallets_by_key.items()}
-        local_ctx.duplicate_ids = set(ctx.duplicate_ids)
-        doc = load_yaml(path)
-        if isinstance(doc, dict):
-            local_ctx.index(doc)
-        validate_record(local, label, doc, docs, local_ctx)
-
-        if not local.errors:
-            f.error("negative-should-fail",
-                    f"{label}: expected invalid, validated cleanly — the probe "
-                    f"proves nothing")
-        elif code not in codes_of(local.errors):
-            f.error("negative-wrong-reason",
-                    f"{label}: expected finding {code!r}, got "
-                    f"{sorted(codes_of(local.errors))}")
-        elif detail and not any(detail in line for line in lines_for(local.errors, code)):
-            f.error("negative-wrong-reason",
-                    f"{label}: finding {code!r} fired but not for {detail!r} — "
-                    f"the fixture no longer tests the invariant it is named "
-                    f"for: {lines_for(local.errors, code)}")
-
-    # The declared extension point after the corpus loop (RULED Q1). EMPTY
-    # here; a composing layer's hook may adjudicate fixtures of its own and
-    # append them to `negatives` and `covered`, so the corpus note counts them.
-    for hook in SELF_TEST_HOOKS:
-        hook(f, docs, ctx, negatives, covered)
-
+def _check_multi_key_named_probes(f, negatives):
     # The named probes below look their fixtures up by name.
     by_name = {p.name: p for p in negatives}
 
@@ -1774,6 +1881,8 @@ def self_test(f: Findings, docs: dict[str, dict], ctx: Context) -> None:
                     f"expected_failure_detail pin naming their invariant; an "
                     f"unpinned probe can be mutated into testing nothing")
 
+
+def _check_corpus_key_disjointness(f, ctx):
     # ID DISJOINTNESS, asserted rather than assumed. `key_id` is DID-scoped, so
     # a fixture reusing a live-or-packaged identifier makes `wallets_by_key`
     # two-owner and every exercise presenting that key is refused as AMBIGUOUS —
@@ -1789,6 +1898,43 @@ def self_test(f: Findings, docs: dict[str, dict], ctx: Context) -> None:
                     f"wallet_id and declared key_id must be DISJOINT, or an "
                     f"exercise presenting that key resolves to no single "
                     f"wallet and the audience binding cannot run")
+
+
+def self_test(f: Findings, docs: dict[str, dict], ctx: Context) -> None:
+    positives = positive_paths()
+    negatives = negative_paths()
+    if not positives:
+        f.error("examples-missing", "no packaged positive examples found")
+    if not negatives:
+        f.error("examples-missing", "no packaged negative fixtures found")
+
+    # The canonical custody registry is validated as a positive: it is the
+    # closed set every other record resolves against.
+    registry_label = str(CUSTODY_REGISTRY_PATH.relative_to(ROOT))
+    validate_record(f, registry_label, ctx.registry, docs, ctx)
+    if f.errors:
+        f.note("the canonical custody registry is validated first; downstream "
+               "ceiling checks resolve against it")
+
+    for path in positives:
+        label = str(path.relative_to(ROOT))
+        before = len(f.errors)
+        validate_record(f, label, load_yaml(path), docs, ctx)
+        for i in range(before, len(f.errors)):
+            f.errors[i] = f"{f.errors[i]} [expected a valid example]"
+
+    covered: dict[str, list[str]] = {}
+    for path in negatives:
+        _check_negative_fixture(f, docs, ctx, path, covered)
+
+    # The declared extension point after the corpus loop (RULED Q1). EMPTY
+    # here; a composing layer's hook may adjudicate fixtures of its own and
+    # append them to `negatives` and `covered`, so the corpus note counts them.
+    for hook in SELF_TEST_HOOKS:
+        hook(f, docs, ctx, negatives, covered)
+
+    _check_multi_key_named_probes(f, negatives)
+    _check_corpus_key_disjointness(f, ctx)
 
     # Coverage closure: a negative confirmation PER REQUIREMENT.
     for requirement, statement in REQUIREMENTS.items():
@@ -1891,6 +2037,53 @@ def sweep_candidates(target: Path) -> tuple[list[Path], list[Path]]:
     return sorted(files), sorted(pruned)
 
 
+def _repo_scan_path_excluded(path):
+    if set(path.parts) & SKIP_DIR_NAMES:
+        return True
+    # Exclude ANY packaged corpus, not only this checkout's. Domain repos
+    # pin and vendor openxFactory, so the normal consumption path scans a
+    # COPY — and matching on this checkout's absolute paths meant every
+    # vendored negative fixture was re-adjudicated as a live record.
+    if "examples" in path.parts and any(
+            part in ("openxwallet", "openxwallet-agent-profile")
+            for part in path.parts):
+        return True
+
+    return False
+
+
+def _read_repo_scan_document(f, path, sweep):
+    try:
+        doc = load_yaml(path)
+    except yaml.YAMLError as exc:
+        # A whole-checkout sweep is not the place to adjudicate unrelated
+        # YAML: a file that does not parse cannot carry a family kind. An
+        # explicitly named file is a different matter.
+        if sweep:
+            return None, 1
+        f.error("yaml", f"{path}: parse failure: {exc}")
+        return None, 0
+    if not isinstance(doc, dict) or doc.get("kind") not in KIND_TO_SCHEMA:
+        return None, 1
+    if path.resolve() == CUSTODY_REGISTRY_PATH.resolve():
+        return None, 0
+
+    return doc, 0
+
+
+def _repo_scan_documents(f, files, sweep):
+    skipped = 0
+    found = []
+    for path in files:
+        if _repo_scan_path_excluded(path):
+            continue
+        doc, omitted = _read_repo_scan_document(f, path, sweep)
+        skipped += omitted
+        if doc is not None:
+            found.append((path, doc))
+    return found, skipped
+
+
 def repo_scan(f: Findings, target: Path, docs: dict[str, dict],
               ctx: Context) -> None:
     sweep = target.is_dir()
@@ -1905,36 +2098,8 @@ def repo_scan(f: Findings, target: Path, docs: dict[str, dict],
                    + ", ".join(str(p.relative_to(target)) for p in pruned))
     else:
         files, pruned = [target], []
-    scanned = skipped = 0
-    found: list[tuple[Path, dict]] = []
-    for path in files:
-        if set(path.parts) & SKIP_DIR_NAMES:
-            continue
-        # Exclude ANY packaged corpus, not only this checkout's. Domain repos
-        # pin and vendor openxFactory, so the normal consumption path scans a
-        # COPY — and matching on this checkout's absolute paths meant every
-        # vendored negative fixture was re-adjudicated as a live record.
-        if "examples" in path.parts and any(
-                part in ("openxwallet", "openxwallet-agent-profile")
-                for part in path.parts):
-            continue
-        try:
-            doc = load_yaml(path)
-        except yaml.YAMLError as exc:
-            # A whole-checkout sweep is not the place to adjudicate unrelated
-            # YAML: a file that does not parse cannot carry a family kind. An
-            # explicitly named file is a different matter.
-            if sweep:
-                skipped += 1
-                continue
-            f.error("yaml", f"{path}: parse failure: {exc}")
-            continue
-        if not isinstance(doc, dict) or doc.get("kind") not in KIND_TO_SCHEMA:
-            skipped += 1
-            continue
-        if path.resolve() == CUSTODY_REGISTRY_PATH.resolve():
-            continue
-        found.append((path, doc))
+    scanned = 0
+    found, skipped = _repo_scan_documents(f, files, sweep)
 
     # INDEX FIRST, then validate. Without this the cross-record rules — the
     # custody ceiling, attenuation, revocation through the chain, the audience
@@ -1975,6 +2140,29 @@ def report(f: Findings, strict: bool) -> int:
     return 1 if f.errors or (strict and f.warnings) else 0
 
 
+def _check_schema_metadata(f, docs):
+    for name, doc in sorted(docs.items()):
+        try:
+            Draft202012Validator.check_schema(doc)
+        except Exception as exc:  # noqa: BLE001
+            f.error("schema-meta-invalid", f"{name}: {exc}")
+        if not doc.get("$schema") or not doc.get("$id"):
+            f.error("schema-identity-missing",
+                    f"{name}: every schema in this family declares its dialect "
+                    f"($schema) and an absolute $id, so a consumer's stock "
+                    f"validator resolves the bundle the same way this one does")
+
+
+def _corpus_context(registry, vocabulary):
+    ctx = Context(registry, vocabulary)
+    for path in positive_paths():
+        doc = load_yaml(path)
+        if isinstance(doc, dict):
+            ctx.index(doc)
+
+    return ctx
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -2005,22 +2193,8 @@ def main() -> int:
         return 2
 
     f = Findings()
-    for name, doc in sorted(docs.items()):
-        try:
-            Draft202012Validator.check_schema(doc)
-        except Exception as exc:  # noqa: BLE001
-            f.error("schema-meta-invalid", f"{name}: {exc}")
-        if not doc.get("$schema") or not doc.get("$id"):
-            f.error("schema-identity-missing",
-                    f"{name}: every schema in this family declares its dialect "
-                    f"($schema) and an absolute $id, so a consumer's stock "
-                    f"validator resolves the bundle the same way this one does")
-
-    ctx = Context(registry, vocabulary)
-    for path in positive_paths():
-        doc = load_yaml(path)
-        if isinstance(doc, dict):
-            ctx.index(doc)
+    _check_schema_metadata(f, docs)
+    ctx = _corpus_context(registry, vocabulary)
     f.note(vocabulary_note(VOCABULARY_BINDING, scan_vocabulary))
 
     try:
