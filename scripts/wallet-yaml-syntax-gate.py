@@ -89,6 +89,7 @@ def scan(target: Path, kinds: dict[str, str]) -> int:
             continue
         try:
             for _doc in yaml.safe_load_all(text):
+                # Exhaust every document so lazy parser errors are reported below.
                 pass
         except yaml.YAMLError as exc:
             findings += 1

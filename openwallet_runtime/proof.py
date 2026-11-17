@@ -11,7 +11,7 @@ import base64
 from dataclasses import dataclass
 import json
 import re
-from typing import Protocol
+from typing import Protocol, cast
 
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
@@ -71,9 +71,12 @@ def _integer(value: object) -> bool:
 
 
 def _reference(value: object) -> bool:
+    if type(value) is not str:
+        return False
+    reference = cast(str, value)
     return (
-        type(value) is str and 0 < len(value) <= 256 and value == value.strip()
-        and not any(ord(c) < 32 or ord(c) == 127 or 0xD800 <= ord(c) <= 0xDFFF for c in value)
+        0 < len(reference) <= 256 and reference == reference.strip()
+        and not any(ord(c) < 32 or ord(c) == 127 or 0xD800 <= ord(c) <= 0xDFFF for c in reference)
     )
 
 
@@ -101,7 +104,10 @@ def _check_binding(binding: TrustedKeyBinding, now: int) -> None:
 
 
 def _unsigned(proof: object) -> dict:
-    if type(proof) is not dict or set(proof) != _FIELDS | {"signature"}:
+    if type(proof) is not dict:
+        raise ProofError("invalid-proof")
+    proof = cast(dict, proof)
+    if set(proof) != _FIELDS | {"signature"}:
         raise ProofError("invalid-proof")
     if proof["profile"] != PROFILE or proof["alg"] != "Ed25519":
         raise ProofError("unsupported-profile")
@@ -119,7 +125,7 @@ def _unsigned(proof: object) -> dict:
 def _message(unsigned: dict) -> bytes:
     try:
         return _CONTEXT + rfc8785.dumps(unsigned)
-    except (rfc8785.CanonicalizationError, UnicodeError, TypeError, ValueError):
+    except (TypeError, ValueError):
         raise ProofError("invalid-proof") from None
 
 
@@ -207,7 +213,7 @@ def decode_proof(raw: bytes) -> dict:
         raise ProofError("invalid-proof")
     try:
         proof = json.loads(raw.decode("utf-8"), object_pairs_hook=_unique, parse_constant=_constant)
-    except (UnicodeError, json.JSONDecodeError, ValueError, RecursionError):
+    except (ValueError, RecursionError):
         raise ProofError("invalid-proof") from None
     _unsigned(proof)
     return proof
@@ -217,5 +223,5 @@ def encode_proof(proof: dict) -> bytes:
     _unsigned(proof)
     try:
         return rfc8785.dumps(proof)
-    except (rfc8785.CanonicalizationError, UnicodeError, TypeError, ValueError):
+    except (TypeError, ValueError):
         raise ProofError("invalid-proof") from None

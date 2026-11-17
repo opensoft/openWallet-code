@@ -55,9 +55,10 @@ def test_independently_signed_wrong_preimages_refuse(vector, message_change):
     changed = (b"other-protocol\0" + vector["unsigned_canonical_utf8"].encode()
                if message_change == "wrong-domain" else message[:-1] + b" ")
     proof = {**vector["proof"], "signature": base64.urlsafe_b64encode(key.sign(changed)).rstrip(b"=").decode()}
+    verify_proof_binding = binding_for(vector)
     with pytest.raises(ProofError, match="invalid-signature"):
         verify_proof(proof, expected_digest=proof["challenge_digest"],
-                     binding=binding_for(vector), now=vector["now"])
+                     binding=verify_proof_binding, now=vector["now"])
 
 
 def test_fixed_vector_still_requires_current_binding_and_expected_digest(vector):

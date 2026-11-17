@@ -334,7 +334,7 @@ _JWK_PRIVATE_RE = re.compile(
     r'"kty"\s*:.*"d"\s*:\s*"|"d"\s*:\s*".*"kty"\s*:', re.S)
 
 _EXPECTED_RE = re.compile(r"^#\s*expected_failure:\s*(\S+)\s*$")
-_DETAIL_RE = re.compile(r"^#\s*expected_failure_detail:\s*(.+?)\s*$")
+_DETAIL_RE = re.compile(r"^#\s*expected_failure_detail:(.+)$")
 _REQUIREMENT_RE = re.compile(r"^#\s*requirement:\s*(\S+)\s*$")
 
 
@@ -1642,7 +1642,9 @@ def expected_failure(path: Path) -> tuple[str, str | None, str]:
         if (m := _EXPECTED_RE.match(line)):
             code = m.group(1)
         elif (m := _DETAIL_RE.match(line)):
-            detail = m.group(1)
+            # Match a whole split line once, then trim without regex backtracking.
+            # Preserve the historical final whitespace for a whitespace-only pin.
+            detail = m.group(1).strip() or m.group(1)[-1]
         elif (m := _REQUIREMENT_RE.match(line)):
             requirement = m.group(1)
     if code is None:

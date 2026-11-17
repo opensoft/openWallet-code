@@ -36,8 +36,9 @@ def assert_peer_refused(service, actor, action, subject):
     payload = {"subject_ref": subject}
     if action == "sign":
         payload["message"] = base64.urlsafe_b64encode(signing_message(binding)).decode()
+    _post_target = client(actor)
     with pytest.raises(ProofError, match="service-refused"):
-        client(actor)._post("/v0/" + action, payload)
+        _post_target._post("/v0/" + action, payload)
 
 
 def test_actual_mutual_tls_registry_and_opaque_signing(service):
@@ -79,8 +80,9 @@ def test_current_registry_revocation_blocks_resolve_and_sign(service):
     signer = RemoteSigner(client("agent"), subject_ref="subject:a")
     create_proof(DIGEST, binding, signer, now=1000)
     registry.revoke(binding.binding_ref)
+    resolve_target = RemoteRegistry(client("agent"))
     with pytest.raises(ProofError, match="service-refused"):
-        RemoteRegistry(client("agent")).resolve("subject:a", now=1000)
+        resolve_target.resolve("subject:a", now=1000)
     with pytest.raises(ProofError, match="signer-unavailable"):
         create_proof(DIGEST, binding, signer, now=1000)
 
@@ -107,8 +109,10 @@ def test_signing_cannot_be_used_for_another_domain_or_preimage(service, change):
         payload = json.loads(body)
         payload["binding_ref" if change == "binding" else "verified"] = "changed"
         message = prefix + b"\0" + rfc8785.dumps(payload)
+    _post_target = client("agent")
+    _post_argument_2 = {"subject_ref": "subject:a", "message": base64.urlsafe_b64encode(message).decode()}
     with pytest.raises(ProofError, match="service-refused"):
-        client("agent")._post("/v0/sign", {"subject_ref": "subject:a", "message": base64.urlsafe_b64encode(message).decode()})
+        _post_target._post("/v0/sign", _post_argument_2)
 
 
 @pytest.mark.parametrize("raw", [b'{"a":1,"a":2}', b'{"a":NaN}', b'[]', b'\xff', b' ' * 8193])
@@ -122,10 +126,14 @@ def test_missing_client_certificate_cannot_complete_authenticated_request(servic
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
     context.load_verify_locations(cafile=str(directory / "ca.pem"))
     connection = http.client.HTTPSConnection("localhost", server.server_port, context=context, timeout=3)
+    def complete_request():
+        # TLS 1.3 can report the peer's certificate rejection on write or read.
+        connection.request("POST", "/v0/resolve", body=b'{"subject_ref":"subject:a"}')
+        return connection.getresponse()
+
     try:
         with pytest.raises((ssl.SSLError, OSError, http.client.HTTPException)):
-            connection.request("POST", "/v0/resolve", body=b'{"subject_ref":"subject:a"}')
-            connection.getresponse()
+            complete_request()
     finally:
         connection.close()
 
@@ -141,8 +149,9 @@ def test_plaintext_configuration_and_non_mutual_tls_server_refuse(service):
 def test_export_and_admin_routes_and_bad_policy_refuse(service):
     registry, binding, app, _, client, *_ = service
     for route in ("export", "revoke", "register"):
+        _post_target = client("agent")
         with pytest.raises(ProofError, match="service-refused"):
-            client("agent")._post("/v0/" + route, {"subject_ref": binding.subject_ref})
+            _post_target._post("/v0/" + route, {"subject_ref": binding.subject_ref})
     with pytest.raises(ProofError, match="invalid-peer-policy"):
         CustodyApplication(registry, key_directory=app.key_directory,
                            policies={"a" * 64: {"actions": "sign", "subjects": "subject:a"}})
@@ -153,8 +162,9 @@ def test_untrusted_server_ca_refuses(service):
     untrusted = TLSClient("https://localhost:" + str(server.server_port),
                           ca_file=certs["unknown"][0], certificate=certs["agent"][0],
                           private_key=certs["agent"][1])
+    resolve_target = RemoteRegistry(untrusted)
     with pytest.raises(ProofError, match="service-unavailable"):
-        RemoteRegistry(untrusted).resolve("subject:a", now=1000)
+        resolve_target.resolve("subject:a", now=1000)
 
 
 def test_server_hostname_is_checked_even_when_tcp_reaches_the_right_service(service, monkeypatch):
@@ -169,5 +179,6 @@ def test_server_hostname_is_checked_even_when_tcp_reaches_the_right_service(serv
     wrong_name = TLSClient("https://wrong.example.invalid:" + str(server.server_port),
                            ca_file=directory / "ca.pem", certificate=certs["agent"][0],
                            private_key=certs["agent"][1])
+    resolve_target = RemoteRegistry(wrong_name)
     with pytest.raises(ProofError, match="service-unavailable"):
-        RemoteRegistry(wrong_name).resolve("subject:a", now=1000)
+        resolve_target.resolve("subject:a", now=1000)

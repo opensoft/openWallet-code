@@ -161,14 +161,16 @@ def test_signer_errors_are_sanitized_and_wrong_signer_results_refuse(bound_key):
     class BrokenSigner:
         def sign(self, _message):
             raise RuntimeError("sensitive backend detail")
+    create_proof_argument_3 = BrokenSigner()
     with pytest.raises(ProofError) as error:
-        create_proof(DIGEST, binding, BrokenSigner(), now=NOW)
+        create_proof(DIGEST, binding, create_proof_argument_3, now=NOW)
     assert str(error.value) == "signer-unavailable"
     class WrongSigner:
         def sign(self, _message):
             return b"x"*64
+    create_proof_argument_3_2 = WrongSigner()
     with pytest.raises(ProofError, match="invalid-signer-result"):
-        create_proof(DIGEST, binding, WrongSigner(), now=NOW)
+        create_proof(DIGEST, binding, create_proof_argument_3_2, now=NOW)
 
 
 @pytest.mark.parametrize("now", [True, -1, 2**53, 1.0])
