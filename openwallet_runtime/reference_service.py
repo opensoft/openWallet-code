@@ -184,11 +184,7 @@ def read_service_config(path):
         with ExitStack() as handles:
             directory = os.open(root.anchor, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
             handles.callback(os.close, directory)
-            for component in root.parts[1:]:
-                directory = os.open(component, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
-                                    dir_fd=directory)
-                handles.callback(os.close, directory)
-            for component in relative.parts[:-1]:
+            for component in root.parts[1:] + relative.parts[:-1]:
                 directory = os.open(component, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
                                     dir_fd=directory)
                 handles.callback(os.close, directory)
