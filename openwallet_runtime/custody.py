@@ -29,7 +29,7 @@ def decode_object(raw):
         raise ProofError("invalid-service-data")
     try:
         value = json.loads(raw.decode("utf-8"), object_pairs_hook=unique, parse_constant=constant)
-    except (ValueError, UnicodeError, RecursionError):
+    except (ValueError, RecursionError):
         raise ProofError("invalid-service-data") from None
     if type(value) is not dict:
         raise ProofError("invalid-service-data")

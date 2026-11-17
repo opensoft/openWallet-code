@@ -130,6 +130,7 @@ class ReferenceServer(ThreadingHTTPServer):
 
 class ReferenceHandler(BaseHTTPRequestHandler):
     def log_message(self, format, *args):
+        # Suppress the base handler's request logging to keep private routes out of logs.
         pass
 
     def do_POST(self):
